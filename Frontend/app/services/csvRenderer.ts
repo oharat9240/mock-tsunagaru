@@ -1,7 +1,6 @@
 import { notifications } from "@mantine/notifications";
 import type { CsvContent, CsvLayoutConfig, CsvStyleConfig } from "~/types/content";
 import { generateCsvFromSelection, parseCsv } from "~/utils/csvParser";
-import { fileService } from "./fileService";
 
 interface CsvRenderOptions {
   csvData: string;
@@ -91,18 +90,16 @@ class CsvRendererService {
   }
 
   /**
-   * CSVコンテンツから画像を生成してOPFSに保存
+   * CSVコンテンツから画像データを生成（サーバーアップロード用）
    */
-  async generateAndSaveCsvImage(csvContent: Partial<CsvContent>, backgroundFile?: File): Promise<string> {
+  async generateCsvImageData(
+    csvContent: Partial<CsvContent>,
+    backgroundFile?: File,
+  ): Promise<{ data: ArrayBuffer; format: "png" | "jpeg" }> {
     try {
       // 必須フィールドのチェック
       if (!csvContent.originalCsvData || !csvContent.selectedRows || !csvContent.selectedColumns) {
         throw new Error("CSVデータまたは選択情報が不足しています");
-      }
-
-      // 背景画像をOPFSに保存
-      if (backgroundFile) {
-        await fileService.saveFile(backgroundFile);
       }
 
       // 画像をレンダリング（編集されたデータがある場合はそれを使用）
@@ -117,15 +114,10 @@ class CsvRendererService {
         apiUrl: csvContent.apiUrl,
       });
 
-      // レンダリングされた画像をOPFSに保存
-      const imageBlob = new Blob([result.imageData], {
-        type: result.format === "png" ? "image/png" : "image/jpeg",
-      });
-      const imageFile = new File([imageBlob], `csv-rendered-${Date.now()}.${result.format}`, { type: imageBlob.type });
-
-      const imagePath = await fileService.saveFile(imageFile);
-
-      return imagePath;
+      return {
+        data: result.imageData,
+        format: result.format,
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : "CSV画像の生成に失敗しました";
       notifications.show({
@@ -133,26 +125,6 @@ class CsvRendererService {
         message,
         color: "red",
       });
-      throw error;
-    }
-  }
-
-  /**
-   * CSVコンテンツを再生成
-   */
-  async regenerateCsvImage(csvContent: CsvContent, backgroundFile?: File): Promise<string> {
-    try {
-      // 既存の画像を削除
-      if (csvContent.renderedImagePath) {
-        await fileService.deleteFile(csvContent.renderedImagePath);
-      }
-
-      // 新しい画像を生成
-      const newImagePath = await this.generateAndSaveCsvImage(csvContent, backgroundFile);
-
-      return newImagePath;
-    } catch (error) {
-      console.error("CSV regeneration error:", error);
       throw error;
     }
   }

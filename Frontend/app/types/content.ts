@@ -126,14 +126,14 @@ export const ContentItemSchema = z.object({
   name: z.string().min(1, "名前は必須です"),
   type: ContentTypeSchema,
   // ファイルの場合はfileInfo、URLの場合はurlInfo、テキストの場合はtextInfo、気象情報の場合はweatherInfo、CSVの場合はcsvInfo
-  fileInfo: FileContentSchema.optional(),
-  urlInfo: UrlContentSchema.optional(),
-  textInfo: TextContentSchema.optional(),
-  weatherInfo: WeatherContentSchema.optional(),
-  csvInfo: CsvContentSchema.optional(),
+  fileInfo: FileContentSchema.optional().nullable(),
+  urlInfo: UrlContentSchema.optional().nullable(),
+  textInfo: TextContentSchema.optional().nullable(),
+  weatherInfo: WeatherContentSchema.optional().nullable(),
+  csvInfo: CsvContentSchema.optional().nullable(),
   tags: z.array(z.string()).default([]), // タグ
   createdAt: z.string().datetime("無効な作成日時です"),
-  updatedAt: z.string().datetime("無効な更新日時です").optional(),
+  updatedAt: z.string().datetime("無効な更新日時です").optional().nullable(),
 });
 
 // コンテンツインデックス（一覧表示用）

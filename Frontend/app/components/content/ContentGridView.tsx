@@ -9,6 +9,7 @@ interface ContentGridViewProps {
   onContentClick?: (content: ContentIndex) => void;
   onContentEdit?: (content: ContentIndex) => void;
   onContentDelete?: (content: ContentIndex) => void;
+  onContentDownload?: (content: ContentIndex) => void;
   loading?: boolean;
 }
 
@@ -61,7 +62,7 @@ const getGridConfig = (viewportWidth: number): GridConfig => {
 };
 
 export const ContentGridView = memo(
-  ({ contents, onContentClick, onContentEdit, onContentDelete, loading = false }: ContentGridViewProps) => {
+  ({ contents, onContentClick, onContentEdit, onContentDelete, onContentDownload, loading = false }: ContentGridViewProps) => {
     const { width } = useViewportSize();
     const [visibleContents, setVisibleContents] = useState<ContentIndex[]>([]);
     const [hasMore, setHasMore] = useState(true);
@@ -158,6 +159,7 @@ export const ContentGridView = memo(
               onClick={() => handleContentClick(content)}
               onEdit={onContentEdit ? () => onContentEdit(content) : undefined}
               onDelete={onContentDelete ? () => onContentDelete(content) : undefined}
+              onDownload={onContentDownload ? () => onContentDownload(content) : undefined}
             />
           ))}
         </SimpleGrid>

@@ -2,6 +2,7 @@ import { ActionIcon, AspectRatio, Box, Flex, Group, Image, Paper, Text, Tooltip 
 import {
   IconBrandYoutube,
   IconCloud,
+  IconDownload,
   IconEdit,
   IconFile,
   IconFileSpreadsheet,
@@ -54,6 +55,7 @@ interface ContentPreviewProps {
   onClick?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
+  onDownload?: () => void;
   aspectRatio?: number; // 幅対高さの比率 (デフォルト: 3:2)
 }
 
@@ -70,9 +72,12 @@ interface PreviewState {
 }
 
 export const ContentPreview = memo(
-  ({ content, onClick, onEdit, onDelete, aspectRatio = PREVIEW_ASPECT_RATIO }: ContentPreviewProps) => {
+  ({ content, onClick, onEdit, onDelete, onDownload, aspectRatio = PREVIEW_ASPECT_RATIO }: ContentPreviewProps) => {
     const [previewState, setPreviewState] = useState<PreviewState>({ loading: false });
     const { getThumbnailUrl, getContentById } = useContent();
+
+    // ダウンロード可能なコンテンツタイプかどうか
+    const isDownloadable = content.type === "video" || content.type === "image";
 
     // Calculate heights based on constants
     const totalHeight = Math.round(BASE_WIDTH / PREVIEW_ASPECT_RATIO) + INFO_SECTION_HEIGHT;
@@ -517,6 +522,20 @@ export const ContentPreview = memo(
           </Text>
 
           <Group gap="xs" className="content-actions" style={{ opacity: 1, transition: "opacity 0.2s ease" }}>
+            {isDownloadable && onDownload && (
+              <ActionIcon
+                size="xs"
+                variant="subtle"
+                color="green"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDownload();
+                }}
+                aria-label="ダウンロード"
+              >
+                <IconDownload size={12} />
+              </ActionIcon>
+            )}
             {onEdit && (
               <ActionIcon
                 size="xs"

@@ -1,6 +1,7 @@
 import { ActionIcon, Alert, Badge, Box, Button, Group, List, LoadingOverlay, Table, Text } from "@mantine/core";
 import { modals } from "@mantine/modals";
 import {
+  IconDownload,
   IconEdit,
   IconExclamationCircle,
   IconEye,
@@ -60,6 +61,7 @@ export default function ContentsPage() {
     checkContentUsageStatus,
     updateContent,
     getContentById,
+    downloadContent,
   } = useContent();
 
   const { getUnusedContentIds } = useUnusedContents();
@@ -455,18 +457,34 @@ export default function ContentsPage() {
                       <Text size="sm">{new Date(content.createdAt).toLocaleString("ja-JP")}</Text>
                     </Table.Td>
                     <Table.Td>
-                      <ActionIcon
-                        variant="subtle"
-                        color="red"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleContentDelete(content.id, content.name);
-                        }}
-                        aria-label="削除"
-                      >
-                        <IconTrash size={16} />
-                      </ActionIcon>
+                      <Group gap="xs">
+                        {(content.type === "video" || content.type === "image") && (
+                          <ActionIcon
+                            variant="subtle"
+                            color="green"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              downloadContent(content.id);
+                            }}
+                            aria-label="ダウンロード"
+                          >
+                            <IconDownload size={16} />
+                          </ActionIcon>
+                        )}
+                        <ActionIcon
+                          variant="subtle"
+                          color="red"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleContentDelete(content.id, content.name);
+                          }}
+                          aria-label="削除"
+                        >
+                          <IconTrash size={16} />
+                        </ActionIcon>
+                      </Group>
                     </Table.Td>
                   </Table.Tr>
                 );
@@ -486,6 +504,9 @@ export default function ContentsPage() {
           }}
           onContentDelete={(content) => {
             handleContentDelete(content.id, content.name);
+          }}
+          onContentDownload={(content) => {
+            downloadContent(content.id);
           }}
         />
       )}

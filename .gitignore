@@ -1,5 +1,5 @@
 .DS_Store
-/node_modules/
+node_modules/
 
 # React Router
 /.react-router/
@@ -13,3 +13,5 @@ test-content/
 /playwright-report/
 /e2e/test-data/
 /e2e/screenshots/
+
+.pnpm-store

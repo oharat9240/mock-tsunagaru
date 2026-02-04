@@ -11,7 +11,6 @@ import {
 import { useEffect, useState } from "react";
 import { useContent } from "~/hooks/useContent";
 import type { ContentIndex, ContentItem, CsvContent, TextContent, WeatherContent } from "~/types/content";
-import { OPFSManager } from "~/utils/storage/opfs";
 import { getIframeSandboxAttributes } from "~/utils/urlValidator";
 import { ContentEditModal } from "./ContentEditModal";
 
@@ -38,7 +37,8 @@ export const ContentPreviewModal = ({
   const [loading, setLoading] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const { getContentById, updateContent, deleteContent, deleteContentForced, checkContentUsageStatus } = useContent();
+  const { getContentById, updateContent, deleteContent, deleteContentForced, checkContentUsageStatus, getFileUrl } =
+    useContent();
 
   useEffect(() => {
     if (!opened || !contentId) {
@@ -53,36 +53,16 @@ export const ContentPreviewModal = ({
         const contentData = await getContentById(contentId);
         setContent(contentData);
 
-        // プレビューURL生成
+        // プレビューURL生成（サーバーから取得）
         if (contentData?.type === "image" || contentData?.type === "video") {
           if (contentData.fileInfo?.storagePath) {
-            try {
-              // OPFSManagerを使用してファイルを読み込み
-              const opfs = OPFSManager.getInstance();
-              const fileData = await opfs.readFile(contentData.fileInfo.storagePath);
-              if (fileData) {
-                const blob = new Blob([fileData], { type: contentData.fileInfo.mimeType });
-                const url = URL.createObjectURL(blob);
-                setPreviewUrl(url);
-              }
-            } catch (fileError) {
-              console.error("Failed to read file from OPFS:", fileError);
-            }
+            const url = getFileUrl(contentData.fileInfo.storagePath);
+            setPreviewUrl(url);
           }
         } else if (contentData?.type === "csv" && contentData.csvInfo?.renderedImagePath) {
           // CSVの場合はレンダリング済み画像を表示
-          try {
-            const opfs = OPFSManager.getInstance();
-            const fileData = await opfs.readFile(contentData.csvInfo.renderedImagePath);
-            if (fileData) {
-              const mimeType = contentData.csvInfo.format === "png" ? "image/png" : "image/jpeg";
-              const blob = new Blob([fileData], { type: mimeType });
-              const url = URL.createObjectURL(blob);
-              setPreviewUrl(url);
-            }
-          } catch (fileError) {
-            console.error("Failed to read CSV rendered image from OPFS:", fileError);
-          }
+          const url = getFileUrl(contentData.csvInfo.renderedImagePath);
+          setPreviewUrl(url);
         }
       } catch (error) {
         console.error("Failed to load content:", error);
@@ -92,22 +72,10 @@ export const ContentPreviewModal = ({
     };
 
     loadContent();
-  }, [opened, contentId, getContentById]);
-
-  // プレビューURLのクリーンアップ
-  useEffect(() => {
-    return () => {
-      if (previewUrl) {
-        URL.revokeObjectURL(previewUrl);
-      }
-    };
-  }, [previewUrl]);
+  }, [opened, contentId, getContentById, getFileUrl]);
 
   const handleClose = () => {
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-      setPreviewUrl(null);
-    }
+    setPreviewUrl(null);
     onClose();
   };
 
