@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import { Alert, Center, Loader, Modal } from "@mantine/core";
+import { IconAlertCircle } from "@tabler/icons-react";
+import { useCallback, useEffect, useState } from "react";
 import { LayoutUsageDisplay } from "~/components/layout/LayoutUsageDisplay";
 import { useLayout } from "~/hooks/useLayout";
 import type { LayoutItem, Orientation, Region } from "~/types/layout";
@@ -19,45 +21,70 @@ interface LayoutEditModalProps {
 
 export const LayoutEditModal = ({ opened, layoutId, onClose, onSubmit }: LayoutEditModalProps) => {
   const [layoutData, setLayoutData] = useState<LayoutItem | null>(null);
-  const [_loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [dataReady, setDataReady] = useState(false);
   const { getLayoutById } = useLayout();
 
   // レイアウトデータを取得
+  const loadData = useCallback(async () => {
+    if (!layoutId) return;
+
+    setLoading(true);
+    setError(null);
+    setDataReady(false);
+
+    try {
+      const data = await getLayoutById(layoutId);
+      if (data) {
+        setLayoutData(data);
+        setDataReady(true);
+      } else {
+        setError("レイアウトが見つかりません");
+        setLayoutData(null);
+      }
+    } catch (err) {
+      console.error("Failed to load layout data:", err);
+      setError(err instanceof Error ? err.message : "レイアウトの読み込みに失敗しました");
+      setLayoutData(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [layoutId, getLayoutById]);
+
   useEffect(() => {
     if (opened && layoutId) {
-      const loadLayoutData = async () => {
-        setLoading(true);
-        setDataReady(false);
-        try {
-          const data = await getLayoutById(layoutId);
-          setLayoutData(data);
-          setDataReady(true);
-        } catch (error) {
-          console.error("Failed to load layout data:", error);
-          setLayoutData(null);
-          setDataReady(false);
-        } finally {
-          setLoading(false);
-        }
-      };
-
-      loadLayoutData();
+      loadData();
     } else {
       setLayoutData(null);
       setDataReady(false);
+      setError(null);
     }
-  }, [opened, layoutId, getLayoutById]);
+  }, [opened, layoutId, loadData]);
 
   const handleClose = () => {
     setLayoutData(null);
     setDataReady(false);
+    setError(null);
     onClose();
   };
 
-  // データが準備できていない場合は何も表示しない
-  if (opened && layoutId && (!dataReady || !layoutData)) {
-    return null;
+  // ローディング中またはエラー時はローディング/エラーモーダルを表示
+  if (opened && layoutId && (loading || error || !dataReady)) {
+    return (
+      <Modal opened={opened} onClose={handleClose} title="レイアウトを編集" centered>
+        {loading && (
+          <Center py="xl">
+            <Loader size="lg" />
+          </Center>
+        )}
+        {error && (
+          <Alert icon={<IconAlertCircle size={16} />} color="red" title="エラー">
+            {error}
+          </Alert>
+        )}
+      </Modal>
+    );
   }
 
   const initialData = layoutData

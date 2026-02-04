@@ -2,6 +2,7 @@ import { Anchor, AppShell, Avatar, Button, Group, Menu, Text, Title, UnstyledBut
 import { IconDoorExit, IconHome, IconMenu2, IconSettings } from "@tabler/icons-react";
 import { useAtom } from "jotai";
 import { Link, useLocation } from "react-router";
+import { env } from "~/config/env";
 import { useAuth } from "~/hooks/useAuth";
 import { useLastTab } from "~/hooks/useLastTab";
 import { headerColorAtom, logoutAtom } from "~/states";
@@ -49,7 +50,7 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
           <Group>
             <Anchor component={Link} to="/" td="none" onClick={handleHomeClick}>
               <Title order={3} c="white">
-                もっく！つながる
+                {env.appTitle}
               </Title>
             </Anchor>
           </Group>

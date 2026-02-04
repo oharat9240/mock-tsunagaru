@@ -1,4 +1,5 @@
-import { Box, Button, Flex, LoadingOverlay, Modal, Stack, Text, useMantineColorScheme } from "@mantine/core";
+import { Box, Button, Flex, Group, LoadingOverlay, Modal, Stack, Text, useMantineColorScheme } from "@mantine/core";
+import { IconPlayerPlay } from "@tabler/icons-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLayout } from "~/hooks/useLayout";
 import { usePlaylist } from "~/hooks/usePlaylist";
@@ -12,9 +13,10 @@ interface PlaylistPreviewModalProps {
   opened: boolean;
   onClose: () => void;
   playlistId: string | null;
+  onPlay?: (playlistId: string) => void;
 }
 
-export function PlaylistPreviewModal({ opened, onClose, playlistId }: PlaylistPreviewModalProps) {
+export function PlaylistPreviewModal({ opened, onClose, playlistId, onPlay }: PlaylistPreviewModalProps) {
   const { colorScheme } = useMantineColorScheme();
   const { getPlaylistById } = usePlaylist();
   const { getLayoutById } = useLayout();
@@ -39,6 +41,11 @@ export function PlaylistPreviewModal({ opened, onClose, playlistId }: PlaylistPr
           throw new Error("プレイリストが見つかりません");
         }
         setPlaylist(playlistData);
+
+        // レイアウトIDが設定されているか確認
+        if (!playlistData.layoutId) {
+          throw new Error("プレイリストにレイアウトが設定されていません");
+        }
 
         // レイアウト情報を取得
         const layoutData = await getLayoutById(playlistData.layoutId);
@@ -170,11 +177,27 @@ export function PlaylistPreviewModal({ opened, onClose, playlistId }: PlaylistPr
 
   if (!opened) return null;
 
+  const handlePlay = () => {
+    if (playlistId && onPlay) {
+      onClose();
+      onPlay(playlistId);
+    }
+  };
+
   return (
     <Modal
       opened={opened}
       onClose={handleClose}
-      title="プレイリストプレビュー"
+      title={
+        <Group gap="md">
+          <Text fw={500}>プレイリストプレビュー</Text>
+          {onPlay && playlistId && (
+            <Button size="xs" color="violet" leftSection={<IconPlayerPlay size={14} />} onClick={handlePlay}>
+              フルスクリーン再生
+            </Button>
+          )}
+        </Group>
+      }
       size="calc(100vw - 40px)"
       styles={{
         content: { height: "calc(100vh - 80px)" },

@@ -1,4 +1,6 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3001";
+import { env } from "~/config/env";
+
+const API_BASE_URL = env.apiUrl;
 
 export interface FileUploadResult {
   id: string;

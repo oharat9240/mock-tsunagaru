@@ -15,7 +15,7 @@ export const LayoutItemSchema = z.object({
   orientation: z.enum(["landscape", "portrait-right", "portrait-left"], "向きを選択してください"),
   regions: z.array(RegionSchema).max(4, "リージョンは最大4つまでです"),
   createdAt: z.string().datetime("無効な作成日時です"),
-  updatedAt: z.string().datetime("無効な更新日時です").optional(),
+  updatedAt: z.string().datetime("無効な更新日時です").optional().nullable(),
 });
 
 export const LayoutIndexSchema = z.object({
@@ -24,7 +24,7 @@ export const LayoutIndexSchema = z.object({
   orientation: z.enum(["landscape", "portrait-right", "portrait-left"]),
   regionCount: z.number().int().min(0).max(4), // 後方互換性のため残す
   createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime().optional(),
+  updatedAt: z.string().datetime().optional().nullable(),
 });
 
 export const LayoutsIndexSchema = z.array(LayoutIndexSchema);

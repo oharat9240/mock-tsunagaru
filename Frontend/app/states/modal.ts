@@ -43,6 +43,14 @@ export const playlistPreviewModalAtom = atom<{ opened: boolean; playlistId: stri
 });
 
 /**
+ * プレイリストフルスクリーンプレイヤーの状態
+ */
+export const playlistFullscreenPlayerAtom = atom<{ opened: boolean; playlistId: string | null }>({
+  opened: false,
+  playlistId: null,
+});
+
+/**
  * モーダル操作のアクション
  */
 export const modalActionsAtom = atom(
@@ -62,7 +70,9 @@ export const modalActionsAtom = atom(
       | { type: "OPEN_CONTENT_PREVIEW"; contentId: string }
       | { type: "CLOSE_CONTENT_PREVIEW" }
       | { type: "OPEN_PLAYLIST_PREVIEW"; playlistId: string }
-      | { type: "CLOSE_PLAYLIST_PREVIEW" },
+      | { type: "CLOSE_PLAYLIST_PREVIEW" }
+      | { type: "OPEN_PLAYLIST_FULLSCREEN"; playlistId: string }
+      | { type: "CLOSE_PLAYLIST_FULLSCREEN" },
   ) => {
     switch (action.type) {
       case "OPEN_PLAYLIST_CREATE":
@@ -100,6 +110,12 @@ export const modalActionsAtom = atom(
         break;
       case "CLOSE_PLAYLIST_PREVIEW":
         set(playlistPreviewModalAtom, { opened: false, playlistId: null });
+        break;
+      case "OPEN_PLAYLIST_FULLSCREEN":
+        set(playlistFullscreenPlayerAtom, { opened: true, playlistId: action.playlistId });
+        break;
+      case "CLOSE_PLAYLIST_FULLSCREEN":
+        set(playlistFullscreenPlayerAtom, { opened: false, playlistId: null });
         break;
     }
   },

@@ -5,89 +5,38 @@ import { apiClient } from "~/services/apiClient";
 import type { ContentItem, TextContent } from "~/types/content";
 import { extractYouTubeVideoId } from "~/types/content";
 
-interface ContentRendererProps {
+interface ContentRendererFullscreenProps {
   content: ContentItem;
-  duration: number; // 秒単位
-  onComplete?: () => void; // 再生完了時のコールバック
-  onProgress?: (progress: number) => void; // 進捗更新時のコールバック（0-100）
+  duration: number;
+  onComplete?: () => void;
   width: number;
   height: number;
+  isPaused: boolean;
+  isMuted: boolean;
 }
 
-export const ContentRenderer = memo(function ContentRenderer({
+export const ContentRendererFullscreen = memo(function ContentRendererFullscreen({
   content,
   duration,
   onComplete,
-  onProgress,
   width,
   height,
-}: ContentRendererProps) {
-  const [, setProgress] = useState(0);
+  isPaused,
+  isMuted,
+}: ContentRendererFullscreenProps) {
   const intervalRef = useRef<number | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const pausedTimeRef = useRef<number>(0);
+  const startTimeRef = useRef<number>(0);
 
-  // プログレス更新とタイマー管理
+  // ファイルコンテンツのURL生成
   useEffect(() => {
-    setProgress(0);
-
-    if (content.type === "video" && videoRef.current) {
-      // 動画の場合は動画の再生状況でプログレスを管理
-      const video = videoRef.current;
-
-      const handleTimeUpdate = () => {
-        if (video.duration) {
-          const progress = (video.currentTime / video.duration) * 100;
-          setProgress(progress);
-          onProgress?.(progress);
-        }
-      };
-
-      const handleEnded = () => {
-        setProgress(100);
-        onProgress?.(100);
-        onComplete?.();
-      };
-
-      video.addEventListener("timeupdate", handleTimeUpdate);
-      video.addEventListener("ended", handleEnded);
-
-      return () => {
-        video.removeEventListener("timeupdate", handleTimeUpdate);
-        video.removeEventListener("ended", handleEnded);
-      };
-    }
-    // その他のコンテンツは設定時間でタイマー管理
-    const startTime = Date.now();
-    const updateProgress = () => {
-      const elapsed = (Date.now() - startTime) / 1000;
-      const newProgress = Math.min((elapsed / duration) * 100, 100);
-      setProgress(newProgress);
-      onProgress?.(newProgress);
-
-      if (newProgress >= 100) {
-        onComplete?.();
-      }
-    };
-
-    intervalRef.current = window.setInterval(updateProgress, 100);
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-    };
-  }, [content, duration, onComplete, onProgress]);
-
-  // ファイルコンテンツのURL生成（サーバーからファイルを取得）
-  useEffect(() => {
-    // 状態をリセット
     setVideoUrl(null);
     setImageUrl(null);
 
     if ((content.type === "video" || content.type === "image") && content.fileInfo?.storagePath) {
-      // サーバーからファイルを取得するURLを生成
       const url = apiClient.getFileUrl(content.fileInfo.storagePath);
       if (content.type === "video") {
         setVideoUrl(url);
@@ -95,11 +44,80 @@ export const ContentRenderer = memo(function ContentRenderer({
         setImageUrl(url);
       }
     } else if (content.type === "csv" && content.csvInfo?.renderedImagePath) {
-      // CSVの場合はレンダリング済み画像のURLを取得
       const url = apiClient.getFileUrl(content.csvInfo.renderedImagePath);
       setImageUrl(url);
     }
   }, [content.type, content.fileInfo, content.csvInfo]);
+
+  // 動画の再生/一時停止制御
+  useEffect(() => {
+    if (content.type !== "video" || !videoRef.current) return;
+
+    const video = videoRef.current;
+
+    if (isPaused) {
+      video.pause();
+    } else {
+      video.play().catch(() => {
+        // 自動再生がブロックされた場合は無視
+      });
+    }
+  }, [isPaused, content.type]);
+
+  // 動画のミュート制御
+  useEffect(() => {
+    if (content.type !== "video" || !videoRef.current) return;
+    videoRef.current.muted = isMuted;
+  }, [isMuted, content.type]);
+
+  // 動画完了イベント
+  useEffect(() => {
+    if (content.type !== "video" || !videoRef.current) return;
+
+    const video = videoRef.current;
+    const handleEnded = () => {
+      onComplete?.();
+    };
+
+    video.addEventListener("ended", handleEnded);
+    return () => video.removeEventListener("ended", handleEnded);
+  }, [content.type, onComplete]);
+
+  // 非動画コンテンツのタイマー管理
+  useEffect(() => {
+    if (content.type === "video") return;
+
+    // 初期化
+    startTimeRef.current = Date.now();
+    pausedTimeRef.current = 0;
+
+    const checkCompletion = () => {
+      if (isPaused) {
+        // 一時停止中は経過時間を記録
+        pausedTimeRef.current = Date.now() - startTimeRef.current;
+        return;
+      }
+
+      // 再開時は開始時間を調整
+      if (pausedTimeRef.current > 0) {
+        startTimeRef.current = Date.now() - pausedTimeRef.current;
+        pausedTimeRef.current = 0;
+      }
+
+      const elapsed = (Date.now() - startTimeRef.current) / 1000;
+      if (elapsed >= duration) {
+        onComplete?.();
+      }
+    };
+
+    intervalRef.current = window.setInterval(checkCompletion, 100);
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
+  }, [content, duration, onComplete, isPaused]);
 
   const renderContent = () => {
     const commonStyle = {
@@ -110,14 +128,25 @@ export const ContentRenderer = memo(function ContentRenderer({
 
     switch (content.type) {
       case "video":
-        return <video ref={videoRef} src={videoUrl || undefined} style={commonStyle} autoPlay muted playsInline />;
+        return (
+          <video
+            ref={videoRef}
+            src={videoUrl || undefined}
+            style={commonStyle}
+            autoPlay={!isPaused}
+            muted={isMuted}
+            playsInline
+          />
+        );
 
       case "image":
         return <img src={imageUrl || undefined} alt={content.name} style={commonStyle} />;
 
       case "text":
         if (!content.textInfo) return null;
-        return <TextRenderer textContent={content.textInfo} width={width} height={height} />;
+        return (
+          <TextRendererFullscreen textContent={content.textInfo} width={width} height={height} isPaused={isPaused} />
+        );
 
       case "youtube": {
         if (!content.urlInfo?.url) return null;
@@ -125,7 +154,7 @@ export const ContentRenderer = memo(function ContentRenderer({
         if (!videoId) return null;
         return (
           <iframe
-            src={`https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&controls=0&modestbranding=1&rel=0`}
+            src={`https://www.youtube.com/embed/${videoId}?autoplay=${isPaused ? 0 : 1}&mute=${isMuted ? 1 : 0}&controls=0&modestbranding=1&rel=0`}
             style={{ width: "100%", height: "100%", border: "none" }}
             allow="autoplay; encrypted-media"
             title={content.name}
@@ -168,44 +197,39 @@ export const ContentRenderer = memo(function ContentRenderer({
       case "weather": {
         if (!content.weatherInfo) return null;
         const { locations, weatherType, apiUrl } = content.weatherInfo;
-        // 単一地点と複数地点でパラメータ名が異なる
         const locationsParam = locations.length === 1 ? `location=${locations[0]}` : `locations=${locations.join(",")}`;
         const weatherUrl = `${apiUrl}/api/image/${weatherType}?${locationsParam}`;
 
-        return (
-          <img
-            src={weatherUrl}
-            alt={content.name}
-            style={commonStyle}
-            onError={(e) => {
-              logger.error("ContentRenderer", `Failed to load weather image: ${weatherUrl}`);
-              e.currentTarget.src = ""; // Clear src to prevent infinite error loop
-            }}
-          />
-        );
+        return <img src={weatherUrl} alt={content.name} style={commonStyle} />;
       }
 
       case "csv":
-        // CSVコンテンツはimageUrlで表示
         return <img src={imageUrl || undefined} alt={content.name} style={commonStyle} />;
 
       default:
-        return <Text>サポートされていないコンテンツタイプです</Text>;
+        return <Text c="white">サポートされていないコンテンツタイプです</Text>;
     }
   };
 
-  return <Box style={{ width, height, position: "relative", overflow: "hidden" }}>{renderContent()}</Box>;
+  return (
+    <Box style={{ width, height, position: "relative", overflow: "hidden", backgroundColor: "#000" }}>
+      {renderContent()}
+    </Box>
+  );
 });
 
-// テキスト表示コンポーネント
-interface TextRendererProps {
+// テキスト表示コンポーネント（フルスクリーン版）
+interface TextRendererFullscreenProps {
   textContent: TextContent;
   width: number;
   height: number;
+  isPaused: boolean;
 }
 
-function TextRenderer({ textContent, width, height }: TextRendererProps) {
+function TextRendererFullscreen({ textContent, width, height, isPaused }: TextRendererFullscreenProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const animationRef = useRef<number | null>(null);
+  const scrollPositionRef = useRef<number>(0);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -213,11 +237,25 @@ function TextRenderer({ textContent, width, height }: TextRendererProps) {
 
     const scrollDistance =
       textContent.scrollType === "horizontal" ? container.scrollWidth - width : container.scrollHeight - height;
-    const scrollDuration = (scrollDistance / textContent.scrollSpeed) * 1000; // スクロール速度に基づく
+    const scrollDuration = (scrollDistance / textContent.scrollSpeed) * 1000;
 
-    let startTime: number;
+    let startTime: number | null = null;
+    let pauseOffset = 0;
+
     const animate = (currentTime: number) => {
-      if (!startTime) startTime = currentTime;
+      if (isPaused) {
+        // 一時停止中は現在の位置を保存
+        if (startTime !== null) {
+          pauseOffset = currentTime - startTime;
+        }
+        animationRef.current = requestAnimationFrame(animate);
+        return;
+      }
+
+      if (startTime === null) {
+        startTime = currentTime - pauseOffset;
+      }
+
       const elapsed = currentTime - startTime;
       const progress = Math.min(elapsed / scrollDuration, 1);
 
@@ -227,13 +265,21 @@ function TextRenderer({ textContent, width, height }: TextRendererProps) {
         container.scrollTop = progress * scrollDistance;
       }
 
+      scrollPositionRef.current = progress;
+
       if (progress < 1) {
-        requestAnimationFrame(animate);
+        animationRef.current = requestAnimationFrame(animate);
       }
     };
 
-    requestAnimationFrame(animate);
-  }, [textContent, width, height]);
+    animationRef.current = requestAnimationFrame(animate);
+
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, [textContent, width, height, isPaused]);
 
   const textStyle: CSSProperties = {
     fontFamily: textContent.fontFamily,

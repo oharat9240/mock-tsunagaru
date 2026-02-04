@@ -62,7 +62,14 @@ const getGridConfig = (viewportWidth: number): GridConfig => {
 };
 
 export const ContentGridView = memo(
-  ({ contents, onContentClick, onContentEdit, onContentDelete, onContentDownload, loading = false }: ContentGridViewProps) => {
+  ({
+    contents,
+    onContentClick,
+    onContentEdit,
+    onContentDelete,
+    onContentDownload,
+    loading = false,
+  }: ContentGridViewProps) => {
     const { width } = useViewportSize();
     const [visibleContents, setVisibleContents] = useState<ContentIndex[]>([]);
     const [hasMore, setHasMore] = useState(true);

@@ -1,6 +1,6 @@
-import { ActionIcon, Alert, Box, Button, Group, LoadingOverlay, Table, Text } from "@mantine/core";
+import { ActionIcon, Alert, Box, Button, Group, LoadingOverlay, Table, Text, Tooltip } from "@mantine/core";
 import { modals } from "@mantine/modals";
-import { IconEdit, IconExclamationCircle, IconEye, IconPlus, IconTrash } from "@tabler/icons-react";
+import { IconEdit, IconExclamationCircle, IconEye, IconPlayerPlay, IconPlus, IconTrash } from "@tabler/icons-react";
 import { useAtom } from "jotai";
 import { useEffect, useState } from "react";
 import type { PlaylistFormData } from "~/components/modals/PlaylistCreateModal";
@@ -8,11 +8,13 @@ import { PlaylistCreateModal } from "~/components/modals/PlaylistCreateModal";
 import type { PlaylistEditFormData } from "~/components/modals/PlaylistEditModal";
 import { PlaylistEditModal } from "~/components/modals/PlaylistEditModal";
 import { PlaylistPreviewModal } from "~/components/modals/PlaylistPreviewModal";
+import { FullscreenPlayer } from "~/components/playlist/FullscreenPlayer";
 import { usePlaylist } from "~/hooks/usePlaylist";
 import {
   modalActionsAtom,
   playlistCreateModalAtom,
   playlistEditModalAtom,
+  playlistFullscreenPlayerAtom,
   playlistPreviewModalAtom,
 } from "~/states/modal";
 import { playlistActionsAtom, playlistsAtom, playlistsErrorAtom, playlistsLoadingAtom } from "~/states/playlist";
@@ -25,6 +27,7 @@ export default function PlaylistPage() {
   const [createModalOpened] = useAtom(playlistCreateModalAtom);
   const [editModalState] = useAtom(playlistEditModalAtom);
   const [previewModalState] = useAtom(playlistPreviewModalAtom);
+  const [fullscreenPlayerState] = useAtom(playlistFullscreenPlayerAtom);
   const [, dispatch] = useAtom(playlistActionsAtom);
   const [, modalDispatch] = useAtom(modalActionsAtom);
   const { getPlaylistsIndex, deletePlaylist, createPlaylist, getPlaylistById, updatePlaylist } = usePlaylist();
@@ -54,6 +57,14 @@ export default function PlaylistPage() {
 
   const handlePreview = (id: string) => {
     modalDispatch({ type: "OPEN_PLAYLIST_PREVIEW", playlistId: id });
+  };
+
+  const handlePlay = (id: string) => {
+    modalDispatch({ type: "OPEN_PLAYLIST_FULLSCREEN", playlistId: id });
+  };
+
+  const handleFullscreenPlayerClose = () => {
+    modalDispatch({ type: "CLOSE_PLAYLIST_FULLSCREEN" });
   };
 
   const handleDelete = async (id: string) => {
@@ -204,24 +215,39 @@ export default function PlaylistPage() {
               <Table.Tr key={playlist.id}>
                 <Table.Td>
                   <Group gap="xs">
-                    <ActionIcon
-                      variant="subtle"
-                      color="blue"
-                      size="sm"
-                      onClick={() => handleEdit(playlist.id)}
-                      aria-label="編集"
-                    >
-                      <IconEdit size={16} />
-                    </ActionIcon>
-                    <ActionIcon
-                      variant="subtle"
-                      color="green"
-                      size="sm"
-                      onClick={() => handlePreview(playlist.id)}
-                      aria-label="プレビュー"
-                    >
-                      <IconEye size={16} />
-                    </ActionIcon>
+                    <Tooltip label="編集">
+                      <ActionIcon
+                        variant="subtle"
+                        color="blue"
+                        size="sm"
+                        onClick={() => handleEdit(playlist.id)}
+                        aria-label="編集"
+                      >
+                        <IconEdit size={16} />
+                      </ActionIcon>
+                    </Tooltip>
+                    <Tooltip label="プレビュー">
+                      <ActionIcon
+                        variant="subtle"
+                        color="green"
+                        size="sm"
+                        onClick={() => handlePreview(playlist.id)}
+                        aria-label="プレビュー"
+                      >
+                        <IconEye size={16} />
+                      </ActionIcon>
+                    </Tooltip>
+                    <Tooltip label="再生">
+                      <ActionIcon
+                        variant="subtle"
+                        color="violet"
+                        size="sm"
+                        onClick={() => handlePlay(playlist.id)}
+                        aria-label="再生"
+                      >
+                        <IconPlayerPlay size={16} />
+                      </ActionIcon>
+                    </Tooltip>
                   </Group>
                 </Table.Td>
                 <Table.Td>
@@ -264,7 +290,13 @@ export default function PlaylistPage() {
         opened={previewModalState.opened}
         onClose={handlePreviewModalClose}
         playlistId={previewModalState.playlistId}
+        onPlay={handlePlay}
       />
+
+      {/* フルスクリーンプレイヤー */}
+      {fullscreenPlayerState.opened && fullscreenPlayerState.playlistId && (
+        <FullscreenPlayer playlistId={fullscreenPlayerState.playlistId} onClose={handleFullscreenPlayerClose} />
+      )}
     </Box>
   );
 }

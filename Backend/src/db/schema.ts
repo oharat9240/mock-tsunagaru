@@ -2,7 +2,7 @@ import { pgTable, uuid, text, timestamp, integer, boolean, jsonb, pgEnum } from 
 
 // Enums
 export const contentTypeEnum = pgEnum("content_type", ["video", "image", "text", "youtube", "url", "weather", "csv"]);
-export const orientationEnum = pgEnum("orientation", ["landscape", "portrait"]);
+export const orientationEnum = pgEnum("orientation", ["landscape", "portrait-right", "portrait-left"]);
 export const eventTypeEnum = pgEnum("event_type", ["playlist", "power_off", "power_on"]);
 export const weekdayEnum = pgEnum("weekday", [
   "monday",

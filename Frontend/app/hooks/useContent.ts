@@ -130,7 +130,11 @@ export const useContent = () => {
         metadata = thumbnailResult.metadata;
 
         // サムネイルをサーバーにアップロード
-        const thumbnailUploadResult = await apiClient.uploadThumbnailBase64(id, thumbnailResult.thumbnailData, "image/jpeg");
+        const thumbnailUploadResult = await apiClient.uploadThumbnailBase64(
+          id,
+          thumbnailResult.thumbnailData,
+          "image/jpeg",
+        );
         thumbnailPath = thumbnailUploadResult.path;
       } catch (error) {
         logger.warn("Content", `Failed to generate thumbnail for ${file.name}`, error);
