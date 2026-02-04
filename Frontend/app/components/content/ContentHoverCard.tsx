@@ -54,9 +54,9 @@ export const ContentHoverCard = ({ content, children, disabled = false }: Conten
     } catch (_error) {
       // フォールバック: タイプ別プレースホルダー
       const typeLabels = {
-        video: "動画",
-        image: "画像",
-        text: "テキスト",
+        video: "Video",
+        image: "Image",
+        text: "Text",
       };
       const typeColors = {
         video: "#228be6",
@@ -64,7 +64,7 @@ export const ContentHoverCard = ({ content, children, disabled = false }: Conten
         text: "#fd7e14",
       };
 
-      const label = typeLabels[content.type as keyof typeof typeLabels] || "ファイル";
+      const label = typeLabels[content.type as keyof typeof typeLabels] || "File";
       const color = typeColors[content.type as keyof typeof typeColors] || "#6c757d";
 
       setPreviewState({
@@ -75,7 +75,7 @@ export const ContentHoverCard = ({ content, children, disabled = false }: Conten
             <svg width="400" height="225" xmlns="http://www.w3.org/2000/svg">
               <rect width="100%" height="100%" fill="${color}"/>
               <text x="50%" y="50%" text-anchor="middle" dy=".3em" fill="white" font-size="16">
-                ${label}プレビュー
+                ${label} Preview
               </text>
             </svg>
           `),
@@ -108,6 +108,7 @@ export const ContentHoverCard = ({ content, children, disabled = false }: Conten
 
   const generateUrlPreview = useCallback(async () => {
     try {
+      const hostname = new URL(content.url || "").hostname;
       setPreviewState({
         loading: false,
         previewUrl:
@@ -116,13 +117,13 @@ export const ContentHoverCard = ({ content, children, disabled = false }: Conten
           <svg width="400" height="225" xmlns="http://www.w3.org/2000/svg">
             <rect width="100%" height="100%" fill="#7950f2"/>
             <text x="50%" y="30%" text-anchor="middle" dy=".3em" fill="white" font-size="14">
-              Webページ
+              Web Page
             </text>
             <text x="50%" y="50%" text-anchor="middle" dy=".3em" fill="white" font-size="12">
-              ${new URL(content.url || "").hostname}
+              ${hostname}
             </text>
             <text x="50%" y="70%" text-anchor="middle" dy=".3em" fill="white" font-size="10">
-              クリックしてアクセス
+              Click to access
             </text>
           </svg>
         `),

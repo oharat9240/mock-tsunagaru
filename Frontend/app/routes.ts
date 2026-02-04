@@ -13,4 +13,5 @@ export default [
   // 独立したページ
   route("/login", "pages/Login.tsx"),
   route("/settings", "pages/Settings.tsx"),
+  route("/player", "pages/Player.tsx"),
 ] satisfies RouteConfig;

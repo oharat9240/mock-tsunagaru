@@ -21,3 +21,7 @@ test-content/
 /e2e/screenshots/
 
 .pnpm-store
+
+uploads/
+
+.playwright-mcp

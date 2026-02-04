@@ -141,11 +141,11 @@ export const ContentIndexSchema = z.object({
   id: z.string(),
   name: z.string(),
   type: ContentTypeSchema,
-  size: z.number().optional(), // ファイルの場合のみ
-  url: z.string().optional(), // URLの場合のみ
+  size: z.number().optional().nullable(), // ファイルの場合のみ
+  url: z.string().optional().nullable(), // URLの場合のみ
   tags: z.array(z.string()),
   createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime().optional(),
+  updatedAt: z.string().datetime().optional().nullable(),
 });
 
 export const ContentsIndexSchema = z.array(ContentIndexSchema);

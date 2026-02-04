@@ -4,6 +4,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import { apiClient } from "~/services/apiClient";
 import type { ContentItem, TextContent } from "~/types/content";
 import { extractYouTubeVideoId } from "~/types/content";
+import { logger } from "~/utils/logger";
 
 interface ContentRendererProps {
   content: ContentItem;
@@ -28,59 +29,19 @@ export const ContentRenderer = memo(function ContentRenderer({
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
 
-  // プログレス更新とタイマー管理
+  // コールバックをrefで保持（依存配列からの除外のため）
+  const onCompleteRef = useRef(onComplete);
+  const onProgressRef = useRef(onProgress);
+
   useEffect(() => {
-    setProgress(0);
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
 
-    if (content.type === "video" && videoRef.current) {
-      // 動画の場合は動画の再生状況でプログレスを管理
-      const video = videoRef.current;
+  useEffect(() => {
+    onProgressRef.current = onProgress;
+  }, [onProgress]);
 
-      const handleTimeUpdate = () => {
-        if (video.duration) {
-          const progress = (video.currentTime / video.duration) * 100;
-          setProgress(progress);
-          onProgress?.(progress);
-        }
-      };
-
-      const handleEnded = () => {
-        setProgress(100);
-        onProgress?.(100);
-        onComplete?.();
-      };
-
-      video.addEventListener("timeupdate", handleTimeUpdate);
-      video.addEventListener("ended", handleEnded);
-
-      return () => {
-        video.removeEventListener("timeupdate", handleTimeUpdate);
-        video.removeEventListener("ended", handleEnded);
-      };
-    }
-    // その他のコンテンツは設定時間でタイマー管理
-    const startTime = Date.now();
-    const updateProgress = () => {
-      const elapsed = (Date.now() - startTime) / 1000;
-      const newProgress = Math.min((elapsed / duration) * 100, 100);
-      setProgress(newProgress);
-      onProgress?.(newProgress);
-
-      if (newProgress >= 100) {
-        onComplete?.();
-      }
-    };
-
-    intervalRef.current = window.setInterval(updateProgress, 100);
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-    };
-  }, [content, duration, onComplete, onProgress]);
-
-  // ファイルコンテンツのURL生成（サーバーからファイルを取得）
+  // ファイルコンテンツのURL生成（サーバーからファイルを取得）- 最初に実行
   useEffect(() => {
     // 状態をリセット
     setVideoUrl(null);
@@ -100,6 +61,91 @@ export const ContentRenderer = memo(function ContentRenderer({
       setImageUrl(url);
     }
   }, [content.type, content.fileInfo, content.csvInfo]);
+
+  // 動画のイベントリスナー設定（videoUrlが設定された後に実行）
+  useEffect(() => {
+    if (content.type !== "video" || !videoUrl || !videoRef.current) return;
+
+    const video = videoRef.current;
+
+    const handleTimeUpdate = () => {
+      if (video.duration) {
+        const progress = (video.currentTime / video.duration) * 100;
+        setProgress(progress);
+        onProgressRef.current?.(progress);
+      }
+    };
+
+    const handleEnded = () => {
+      setProgress(100);
+      onProgressRef.current?.(100);
+      onCompleteRef.current?.();
+    };
+
+    const handleCanPlay = () => {
+      // 動画が再生可能になったら自動再生
+      video.play().catch((err) => {
+        logger.warn("ContentRenderer", "Auto-play failed", err);
+      });
+    };
+
+    const handleError = () => {
+      // 動画のデコードエラーなどが発生した場合、次のコンテンツにスキップ
+      const errorMessage = video.error?.message || "Unknown video error";
+      logger.error("ContentRenderer", `Video playback error: ${errorMessage}`);
+      // エラー時も完了として扱い、次のコンテンツに進む
+      setProgress(100);
+      onProgressRef.current?.(100);
+      onCompleteRef.current?.();
+    };
+
+    video.addEventListener("timeupdate", handleTimeUpdate);
+    video.addEventListener("ended", handleEnded);
+    video.addEventListener("canplay", handleCanPlay);
+    video.addEventListener("error", handleError);
+
+    // 既に再生可能な状態なら再生開始
+    if (video.readyState >= 3) {
+      video.play().catch((err) => {
+        logger.warn("ContentRenderer", "Auto-play failed", err);
+      });
+    }
+
+    return () => {
+      video.removeEventListener("timeupdate", handleTimeUpdate);
+      video.removeEventListener("ended", handleEnded);
+      video.removeEventListener("canplay", handleCanPlay);
+      video.removeEventListener("error", handleError);
+    };
+  }, [content.type, videoUrl]);
+
+  // 非動画コンテンツのタイマー管理
+  useEffect(() => {
+    // 動画は別のuseEffectで管理
+    if (content.type === "video") return;
+
+    setProgress(0);
+    const startTime = Date.now();
+
+    const updateProgress = () => {
+      const elapsed = (Date.now() - startTime) / 1000;
+      const newProgress = Math.min((elapsed / duration) * 100, 100);
+      setProgress(newProgress);
+      onProgressRef.current?.(newProgress);
+
+      if (newProgress >= 100) {
+        onCompleteRef.current?.();
+      }
+    };
+
+    intervalRef.current = window.setInterval(updateProgress, 100);
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
+  }, [content.type, content.id, duration]);
 
   const renderContent = () => {
     const commonStyle = {

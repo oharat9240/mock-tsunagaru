@@ -378,6 +378,9 @@ app.put("/api/layouts/:id", async (req: Request, res: Response, next: NextFuncti
 app.delete("/api/layouts/:id", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const id = req.params.id as string;
+    // 関連するプレイリストのlayoutIdをnullに更新（外部キー制約対応）
+    await db.update(playlists).set({ layoutId: null }).where(eq(playlists.layoutId, id));
+    // レイアウトを削除
     await db.delete(layouts).where(eq(layouts.id, id));
     res.json({ success: true });
   } catch (error) {
@@ -482,6 +485,9 @@ app.put("/api/playlists/:id", async (req: Request, res: Response, next: NextFunc
 app.delete("/api/playlists/:id", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const id = req.params.id as string;
+    // 関連するスケジュールを先に削除（外部キー制約対応）
+    await db.delete(schedules).where(eq(schedules.playlistId, id));
+    // プレイリストを削除
     await db.delete(playlists).where(eq(playlists.id, id));
     res.json({ success: true });
   } catch (error) {
