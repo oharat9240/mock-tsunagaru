@@ -14,9 +14,10 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: 5173,
+    strictPort: true,
     hmr: {
-      host: "localhost",
-      port: 5173,
+      // クライアントのホスト名を自動検出（外部アクセス対応）
+      clientPort: 5173,
     },
     watch: {
       usePolling: true,
