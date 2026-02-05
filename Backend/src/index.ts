@@ -853,25 +853,15 @@ function generateStreamKey(): string {
   return crypto.randomBytes(16).toString("hex");
 }
 
-// HLS/RTMP URL生成（リクエストのホスト名から動的に生成）
+// HLS/RTMP URL（リクエストのホスト名から動的生成）
 function getHlsBaseUrl(req: Request): string {
-  const envUrl = process.env.HLS_BASE_URL;
-  if (envUrl) {
-    return envUrl;
-  }
-  // リクエストのホスト名から動的に生成
-  const host = req.hostname || "localhost";
-  return `http://${host}:8080/hls`;
+  if (process.env.HLS_BASE_URL) return process.env.HLS_BASE_URL;
+  return `http://${req.hostname}:8080/hls`;
 }
 
 function getRtmpUrl(req: Request): string {
-  const envUrl = process.env.RTMP_URL;
-  if (envUrl) {
-    return envUrl;
-  }
-  // リクエストのホスト名から動的に生成
-  const host = req.hostname || "localhost";
-  return `rtmp://${host}:1935/live`;
+  if (process.env.RTMP_URL) return process.env.RTMP_URL;
+  return `rtmp://${req.hostname}:1935/live`;
 }
 
 // ストリーム一覧取得
@@ -1007,8 +997,8 @@ app.post("/api/streams/:id/regenerate-key", async (req: Request, res: Response, 
       return;
     }
 
-    const newStreamKey = generateStreamKey();
     const hlsBaseUrl = getHlsBaseUrl(req);
+    const newStreamKey = generateStreamKey();
     const newHlsUrl = `${hlsBaseUrl}/${newStreamKey}.m3u8`;
 
     // ストリームキーを更新

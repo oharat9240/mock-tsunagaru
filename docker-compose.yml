@@ -3,7 +3,7 @@ services:
     image: postgres:16-alpine
     container_name: mock-tsunagaru-postgres
     ports:
-      - "0.0.0.0:${POSTGRES_PORT:-5432}:5432"
+      - "5432:5432"
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
@@ -23,23 +23,16 @@ services:
       target: development
     container_name: mock-tsunagaru-frontend
     ports:
-      - "0.0.0.0:${FRONTEND_PORT:-5173}:5173"
+      - "5173:5173"
     environment:
-      - NODE_ENV=${APP_ENV:-development}
-      - CI=true
-      - CHOKIDAR_USEPOLLING=true
-      # アプリケーション設定（空の場合は動的にホスト名から生成）
-      - VITE_API_URL=${VITE_API_URL:-}
+      - NODE_ENV=development
+      # 空にするとフロントエンドが動的にホスト名を使用
+      - VITE_API_URL=
       - VITE_APP_TITLE=${VITE_APP_TITLE:-TSUNAGARU}
       - VITE_APP_SUBTITLE=${VITE_APP_SUBTITLE:-デジタルサイネージ管理システム}
-      - VITE_APP_VERSION=${APP_VERSION:-0.0.1}
-      # 外部サービス
       - VITE_WEATHER_API_URL=${WEATHER_API_URL}
       - VITE_CSV_RENDERER_API_URL=${CSV_RENDERER_API_URL}
-      # ライブ配信設定（空の場合は動的にホスト名から生成）
-      - VITE_HLS_BASE_URL=${HLS_BASE_URL:-}
-      - VITE_RTMP_URL=${RTMP_URL:-}
-      # 開発用アカウント情報
+      - VITE_HLS_BASE_URL=
       - VITE_DEV_ADMIN_EMAIL=${DEV_ADMIN_EMAIL}
       - VITE_DEV_ADMIN_PASSWORD=${DEV_ADMIN_PASSWORD}
       - VITE_DEV_USER_EMAIL=${DEV_USER_EMAIL}
@@ -60,26 +53,19 @@ services:
       target: development
     container_name: mock-tsunagaru-backend
     ports:
-      - "0.0.0.0:${BACKEND_PORT:-3001}:3001"
+      - "3001:3001"
     environment:
-      - NODE_ENV=${APP_ENV:-development}
-      - CI=true
-      - CHOKIDAR_USEPOLLING=true
-      # サーバー設定
-      - PORT=${BACKEND_PORT}
-      - HOST=${BACKEND_HOST}
-      - UPLOAD_DIR=${UPLOAD_DIR}
-      - MAX_FILE_SIZE=${MAX_FILE_SIZE}
-      - CORS_ORIGIN=${CORS_ORIGIN}
-      # データベース
-      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
-      # 外部サービス
+      - NODE_ENV=development
+      - PORT=3001
+      - HOST=0.0.0.0
+      - UPLOAD_DIR=/app/uploads
+      - MAX_FILE_SIZE=524288000
+      - CORS_ORIGIN=*
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - WEATHER_API_URL=${WEATHER_API_URL}
       - CSV_RENDERER_API_URL=${CSV_RENDERER_API_URL}
-      # ライブ配信設定（空の場合は動的にホスト名から生成）
-      - RTMP_URL=${RTMP_URL:-}
-      - HLS_BASE_URL=${HLS_BASE_URL:-}
-      # 開発用アカウント情報
+      - RTMP_URL=
+      - HLS_BASE_URL=
       - DEV_ADMIN_EMAIL=${DEV_ADMIN_EMAIL}
       - DEV_ADMIN_PASSWORD=${DEV_ADMIN_PASSWORD}
       - DEV_ADMIN_NAME=${DEV_ADMIN_NAME}
@@ -103,8 +89,8 @@ services:
       dockerfile: Dockerfile
     container_name: mock-tsunagaru-nginx-rtmp
     ports:
-      - "0.0.0.0:${RTMP_PORT:-1935}:1935"   # RTMP受信ポート
-      - "0.0.0.0:${HLS_PORT:-8080}:8080"     # HLS配信ポート
+      - "1935:1935"
+      - "8080:8080"
     depends_on:
       - backend
     restart: unless-stopped
