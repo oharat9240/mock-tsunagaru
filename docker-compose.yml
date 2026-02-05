@@ -3,7 +3,7 @@ services:
     image: postgres:16-alpine
     container_name: mock-tsunagaru-postgres
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "0.0.0.0:${POSTGRES_PORT:-5432}:5432"
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
@@ -23,21 +23,22 @@ services:
       target: development
     container_name: mock-tsunagaru-frontend
     ports:
-      - "${FRONTEND_PORT:-5173}:5173"
+      - "0.0.0.0:${FRONTEND_PORT:-5173}:5173"
     environment:
       - NODE_ENV=${APP_ENV:-development}
       - CI=true
       - CHOKIDAR_USEPOLLING=true
-      # アプリケーション設定
-      - VITE_API_URL=${VITE_API_URL}
-      - VITE_APP_TITLE=${APP_HEADER_TITLE}
-      - VITE_APP_SUBTITLE=${APP_HEADER_SUBTITLE}
-      - VITE_APP_VERSION=${APP_VERSION}
+      # アプリケーション設定（空の場合は動的にホスト名から生成）
+      - VITE_API_URL=${VITE_API_URL:-}
+      - VITE_APP_TITLE=${VITE_APP_TITLE:-TSUNAGARU}
+      - VITE_APP_SUBTITLE=${VITE_APP_SUBTITLE:-デジタルサイネージ管理システム}
+      - VITE_APP_VERSION=${APP_VERSION:-0.0.1}
       # 外部サービス
       - VITE_WEATHER_API_URL=${WEATHER_API_URL}
       - VITE_CSV_RENDERER_API_URL=${CSV_RENDERER_API_URL}
-      # ライブ配信設定
-      - VITE_HLS_BASE_URL=${HLS_BASE_URL}
+      # ライブ配信設定（空の場合は動的にホスト名から生成）
+      - VITE_HLS_BASE_URL=${HLS_BASE_URL:-}
+      - VITE_RTMP_URL=${RTMP_URL:-}
       # 開発用アカウント情報
       - VITE_DEV_ADMIN_EMAIL=${DEV_ADMIN_EMAIL}
       - VITE_DEV_ADMIN_PASSWORD=${DEV_ADMIN_PASSWORD}
@@ -59,7 +60,7 @@ services:
       target: development
     container_name: mock-tsunagaru-backend
     ports:
-      - "${BACKEND_PORT:-3001}:3001"
+      - "0.0.0.0:${BACKEND_PORT:-3001}:3001"
     environment:
       - NODE_ENV=${APP_ENV:-development}
       - CI=true
@@ -75,9 +76,9 @@ services:
       # 外部サービス
       - WEATHER_API_URL=${WEATHER_API_URL}
       - CSV_RENDERER_API_URL=${CSV_RENDERER_API_URL}
-      # ライブ配信設定
-      - RTMP_URL=${RTMP_URL}
-      - HLS_BASE_URL=${HLS_BASE_URL}
+      # ライブ配信設定（空の場合は動的にホスト名から生成）
+      - RTMP_URL=${RTMP_URL:-}
+      - HLS_BASE_URL=${HLS_BASE_URL:-}
       # 開発用アカウント情報
       - DEV_ADMIN_EMAIL=${DEV_ADMIN_EMAIL}
       - DEV_ADMIN_PASSWORD=${DEV_ADMIN_PASSWORD}
@@ -102,8 +103,8 @@ services:
       dockerfile: Dockerfile
     container_name: mock-tsunagaru-nginx-rtmp
     ports:
-      - "${RTMP_PORT:-1935}:1935"   # RTMP受信ポート
-      - "${HLS_PORT:-8080}:8080"     # HLS配信ポート
+      - "0.0.0.0:${RTMP_PORT:-1935}:1935"   # RTMP受信ポート
+      - "0.0.0.0:${HLS_PORT:-8080}:8080"     # HLS配信ポート
     depends_on:
       - backend
     restart: unless-stopped

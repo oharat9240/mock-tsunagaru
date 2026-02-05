@@ -853,14 +853,33 @@ function generateStreamKey(): string {
   return crypto.randomBytes(16).toString("hex");
 }
 
-// HLS URL生成
-const HLS_BASE_URL = process.env.HLS_BASE_URL || "http://localhost:8080/hls";
-const RTMP_URL = process.env.RTMP_URL || "rtmp://localhost:1935/live";
+// HLS/RTMP URL生成（リクエストのホスト名から動的に生成）
+function getHlsBaseUrl(req: Request): string {
+  const envUrl = process.env.HLS_BASE_URL;
+  if (envUrl) {
+    return envUrl;
+  }
+  // リクエストのホスト名から動的に生成
+  const host = req.hostname || "localhost";
+  return `http://${host}:8080/hls`;
+}
+
+function getRtmpUrl(req: Request): string {
+  const envUrl = process.env.RTMP_URL;
+  if (envUrl) {
+    return envUrl;
+  }
+  // リクエストのホスト名から動的に生成
+  const host = req.hostname || "localhost";
+  return `rtmp://${host}:1935/live`;
+}
 
 // ストリーム一覧取得
-app.get("/api/streams", async (_req: Request, res: Response, next: NextFunction) => {
+app.get("/api/streams", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const allStreams = await db.select().from(streams).orderBy(streams.createdAt);
+    const hlsBaseUrl = getHlsBaseUrl(req);
+    const rtmpUrl = getRtmpUrl(req);
 
     const responseData = allStreams.map((stream) => ({
       id: stream.id,
@@ -870,8 +889,8 @@ app.get("/api/streams", async (_req: Request, res: Response, next: NextFunction)
       status: stream.status,
       lastLiveAt: stream.lastLiveAt?.toISOString() || null,
       description: stream.description,
-      rtmpUrl: RTMP_URL,
-      hlsUrl: `${HLS_BASE_URL}/${stream.streamKey}.m3u8`,
+      rtmpUrl,
+      hlsUrl: `${hlsBaseUrl}/${stream.streamKey}.m3u8`,
       createdAt: stream.createdAt.toISOString(),
       updatedAt: stream.updatedAt.toISOString(),
     }));
@@ -893,7 +912,9 @@ app.post("/api/streams", async (req: Request, res: Response, next: NextFunction)
     }
 
     const streamKey = generateStreamKey();
-    const hlsUrl = `${HLS_BASE_URL}/${streamKey}.m3u8`;
+    const hlsBaseUrl = getHlsBaseUrl(req);
+    const rtmpUrl = getRtmpUrl(req);
+    const hlsUrl = `${hlsBaseUrl}/${streamKey}.m3u8`;
 
     // HLSコンテンツを先に作成
     const contentId = uuidv4();
@@ -932,7 +953,7 @@ app.post("/api/streams", async (req: Request, res: Response, next: NextFunction)
       contentId,
       status: "offline",
       description,
-      rtmpUrl: RTMP_URL,
+      rtmpUrl,
       hlsUrl,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -953,6 +974,8 @@ app.get("/api/streams/:id", async (req: Request, res: Response, next: NextFuncti
       return;
     }
 
+    const hlsBaseUrl = getHlsBaseUrl(req);
+    const rtmpUrl = getRtmpUrl(req);
     const s = stream[0];
     res.json({
       id: s.id,
@@ -963,8 +986,8 @@ app.get("/api/streams/:id", async (req: Request, res: Response, next: NextFuncti
       lastLiveAt: s.lastLiveAt?.toISOString() || null,
       description: s.description,
       fallbackImagePath: s.fallbackImagePath,
-      rtmpUrl: RTMP_URL,
-      hlsUrl: `${HLS_BASE_URL}/${s.streamKey}.m3u8`,
+      rtmpUrl,
+      hlsUrl: `${hlsBaseUrl}/${s.streamKey}.m3u8`,
       createdAt: s.createdAt.toISOString(),
       updatedAt: s.updatedAt.toISOString(),
     });
@@ -985,7 +1008,8 @@ app.post("/api/streams/:id/regenerate-key", async (req: Request, res: Response, 
     }
 
     const newStreamKey = generateStreamKey();
-    const newHlsUrl = `${HLS_BASE_URL}/${newStreamKey}.m3u8`;
+    const hlsBaseUrl = getHlsBaseUrl(req);
+    const newHlsUrl = `${hlsBaseUrl}/${newStreamKey}.m3u8`;
 
     // ストリームキーを更新
     await db.update(streams).set({
