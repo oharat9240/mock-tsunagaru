@@ -18,12 +18,10 @@ import { modals } from "@mantine/modals";
 import {
   IconArrowLeft,
   IconArrowRight,
-  IconBrandYoutube,
+  IconBroadcast,
   IconCalendarEvent,
   IconDeviceFloppy,
   IconFile,
-  IconFileText,
-  IconLink,
   IconPhoto,
   IconPlus,
   IconSearch,
@@ -38,13 +36,11 @@ import { useContent } from "~/hooks/useContent";
 import { useLayout } from "~/hooks/useLayout";
 import { useSchedule } from "~/hooks/useSchedule";
 import type { ContentIndex, ContentType } from "~/types/content";
-import { extractYouTubeVideoId } from "~/types/content";
 import type { LayoutItem } from "~/types/layout";
 import type { ContentAssignment, ContentDuration, PlaylistItem } from "~/types/playlist";
 import type { ScheduleIndex } from "~/types/schedule";
 import { WEEKDAY_LABELS } from "~/types/schedule";
 import { logger } from "~/utils/logger";
-import { getYouTubeVideoDurationCached } from "~/utils/youtubePlayer";
 import { ContentAddHandler } from "../content/ContentAddHandler";
 import { ContentDurationModal } from "./ContentDurationModal";
 
@@ -163,7 +159,7 @@ export const PlaylistEditModal = ({ opened, onClose, onSubmit, playlist }: Playl
 
       const initialData = {
         name: playlist.name,
-        device: playlist.device,
+        device: playlist.device || "",
         contentAssignments: mergedAssignments,
       };
       setFormData(initialData);
@@ -317,50 +313,7 @@ export const PlaylistEditModal = ({ opened, onClose, onSubmit, playlist }: Playl
             logger.error("PlaylistEditModal", "Failed to get video duration", error);
           }
         }
-        // YouTubeコンテンツの場合はiframe APIで再生時間を取得
-        else if (newContent.type === "youtube") {
-          try {
-            const contentDetail = await getContentById(newContent.id);
-            if (contentDetail?.urlInfo?.url) {
-              const videoId = extractYouTubeVideoId(contentDetail.urlInfo.url);
-              if (videoId) {
-                // YouTube iframe APIから実際の動画時間を取得
-                const duration = await getYouTubeVideoDurationCached(videoId);
-                if (duration !== null) {
-                  newDurations = [
-                    ...newDurations,
-                    {
-                      contentId: newContent.id,
-                      duration,
-                    },
-                  ];
-                } else {
-                  // API取得失敗時は手動設定
-                  setPendingContentSelection({ regionId, contentIds });
-                  setDurationModalContent({
-                    contentId: newContent.id,
-                    contentName: newContent.name,
-                    contentType: newContent.type,
-                  });
-                  setShowDurationModal(true);
-                  return;
-                }
-              }
-            }
-          } catch (error) {
-            logger.error("PlaylistEditModal", "Failed to get YouTube video info", error);
-            // エラー時は手動設定
-            setPendingContentSelection({ regionId, contentIds });
-            setDurationModalContent({
-              contentId: newContent.id,
-              contentName: newContent.name,
-              contentType: newContent.type,
-            });
-            setShowDurationModal(true);
-            return;
-          }
-        }
-        // その他のコンテンツは再生時間設定が必要
+        // その他のコンテンツ（画像、HLS）は再生時間設定が必要
         else {
           // 選択状態を一時保存
           setPendingContentSelection({ regionId, contentIds });
@@ -767,29 +720,11 @@ export const PlaylistEditModal = ({ opened, onClose, onSubmit, playlist }: Playl
                                 ),
                               },
                               {
-                                value: "text",
+                                value: "hls",
                                 label: (
                                   <Group gap={4} align="center" justify="center" miw="60px" wrap="nowrap">
-                                    <IconFileText size={14} />
-                                    <Text size="xs">テキスト</Text>
-                                  </Group>
-                                ),
-                              },
-                              {
-                                value: "youtube",
-                                label: (
-                                  <Group gap={4} align="center" justify="center" miw="60px" wrap="nowrap">
-                                    <IconBrandYoutube size={14} />
-                                    <Text size="xs">YouTube</Text>
-                                  </Group>
-                                ),
-                              },
-                              {
-                                value: "url",
-                                label: (
-                                  <Group gap={4} align="center" justify="center" miw="60px" wrap="nowrap">
-                                    <IconLink size={14} />
-                                    <Text size="xs">URL</Text>
+                                    <IconBroadcast size={14} />
+                                    <Text size="xs">HLS</Text>
                                   </Group>
                                 ),
                               },

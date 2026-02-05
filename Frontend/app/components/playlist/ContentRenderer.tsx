@@ -1,18 +1,34 @@
 import { Box, Text } from "@mantine/core";
-import type { CSSProperties } from "react";
+import type Hls from "hls.js";
 import { memo, useEffect, useRef, useState } from "react";
 import { apiClient } from "~/services/apiClient";
-import type { ContentItem, TextContent } from "~/types/content";
-import { extractYouTubeVideoId } from "~/types/content";
+import type { ContentItem } from "~/types/content";
 import { logger } from "~/utils/logger";
+
+// HLS.jsを動的にインポート
+let HlsModule: typeof import("hls.js") | null = null;
+const loadHls = async (): Promise<typeof import("hls.js")["default"] | null> => {
+  if (HlsModule) return HlsModule.default;
+  try {
+    HlsModule = await import("hls.js");
+    return HlsModule.default;
+  } catch (e) {
+    logger.error("ContentRenderer", "Failed to load hls.js", e);
+    return null;
+  }
+};
 
 interface ContentRendererProps {
   content: ContentItem;
   duration: number; // 秒単位
-  onComplete?: () => void; // 再生完了時のコールバック
-  onProgress?: (progress: number) => void; // 進捗更新時のコールバック（0-100）
+  onComplete?: () => void;
+  onProgress?: (progress: number) => void;
   width: number;
   height: number;
+  /** エンジン経過時間（秒） */
+  engineTime?: number;
+  /** このコンテンツの開始時刻（エンジン時間） */
+  contentStartTime?: number;
 }
 
 export const ContentRenderer = memo(function ContentRenderer({
@@ -22,14 +38,18 @@ export const ContentRenderer = memo(function ContentRenderer({
   onProgress,
   width,
   height,
+  engineTime = 0,
+  contentStartTime = 0,
 }: ContentRendererProps) {
   const [, setProgress] = useState(0);
-  const intervalRef = useRef<number | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
 
-  // コールバックをrefで保持（依存配列からの除外のため）
+  // エンジン時間に基づく経過時間計算
+  const elapsedTime = engineTime - contentStartTime;
+
+  // コールバックをrefで保持
   const onCompleteRef = useRef(onComplete);
   const onProgressRef = useRef(onProgress);
 
@@ -41,28 +61,22 @@ export const ContentRenderer = memo(function ContentRenderer({
     onProgressRef.current = onProgress;
   }, [onProgress]);
 
-  // ファイルコンテンツのURL生成（サーバーからファイルを取得）- 最初に実行
+  // ファイルコンテンツのURL生成
   useEffect(() => {
-    // 状態をリセット
     setVideoUrl(null);
     setImageUrl(null);
 
     if ((content.type === "video" || content.type === "image") && content.fileInfo?.storagePath) {
-      // サーバーからファイルを取得するURLを生成
       const url = apiClient.getFileUrl(content.fileInfo.storagePath);
       if (content.type === "video") {
         setVideoUrl(url);
       } else {
         setImageUrl(url);
       }
-    } else if (content.type === "csv" && content.csvInfo?.renderedImagePath) {
-      // CSVの場合はレンダリング済み画像のURLを取得
-      const url = apiClient.getFileUrl(content.csvInfo.renderedImagePath);
-      setImageUrl(url);
     }
-  }, [content.type, content.fileInfo, content.csvInfo]);
+  }, [content.type, content.fileInfo]);
 
-  // 動画のイベントリスナー設定（videoUrlが設定された後に実行）
+  // 動画のイベントリスナー設定
   useEffect(() => {
     if (content.type !== "video" || !videoUrl || !videoRef.current) return;
 
@@ -83,17 +97,14 @@ export const ContentRenderer = memo(function ContentRenderer({
     };
 
     const handleCanPlay = () => {
-      // 動画が再生可能になったら自動再生
       video.play().catch((err) => {
         logger.warn("ContentRenderer", "Auto-play failed", err);
       });
     };
 
     const handleError = () => {
-      // 動画のデコードエラーなどが発生した場合、次のコンテンツにスキップ
       const errorMessage = video.error?.message || "Unknown video error";
       logger.error("ContentRenderer", `Video playback error: ${errorMessage}`);
-      // エラー時も完了として扱い、次のコンテンツに進む
       setProgress(100);
       onProgressRef.current?.(100);
       onCompleteRef.current?.();
@@ -104,7 +115,6 @@ export const ContentRenderer = memo(function ContentRenderer({
     video.addEventListener("canplay", handleCanPlay);
     video.addEventListener("error", handleError);
 
-    // 既に再生可能な状態なら再生開始
     if (video.readyState >= 3) {
       video.play().catch((err) => {
         logger.warn("ContentRenderer", "Auto-play failed", err);
@@ -119,33 +129,14 @@ export const ContentRenderer = memo(function ContentRenderer({
     };
   }, [content.type, videoUrl]);
 
-  // 非動画コンテンツのタイマー管理
+  // 静止画・HLSの進捗管理（エンジン時間ベース）
   useEffect(() => {
-    // 動画は別のuseEffectで管理
     if (content.type === "video") return;
 
-    setProgress(0);
-    const startTime = Date.now();
-
-    const updateProgress = () => {
-      const elapsed = (Date.now() - startTime) / 1000;
-      const newProgress = Math.min((elapsed / duration) * 100, 100);
-      setProgress(newProgress);
-      onProgressRef.current?.(newProgress);
-
-      if (newProgress >= 100) {
-        onCompleteRef.current?.();
-      }
-    };
-
-    intervalRef.current = window.setInterval(updateProgress, 100);
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-    };
-  }, [content.type, content.id, duration]);
+    const newProgress = Math.min((elapsedTime / duration) * 100, 100);
+    setProgress(newProgress);
+    onProgressRef.current?.(newProgress);
+  }, [content.type, duration, elapsedTime]);
 
   const renderContent = () => {
     const commonStyle = {
@@ -161,79 +152,16 @@ export const ContentRenderer = memo(function ContentRenderer({
       case "image":
         return <img src={imageUrl || undefined} alt={content.name} style={commonStyle} />;
 
-      case "text":
-        if (!content.textInfo) return null;
-        return <TextRenderer textContent={content.textInfo} width={width} height={height} />;
-
-      case "youtube": {
-        if (!content.urlInfo?.url) return null;
-        const videoId = extractYouTubeVideoId(content.urlInfo.url);
-        if (!videoId) return null;
+      case "hls":
+        if (!content.hlsInfo?.url) return null;
         return (
-          <iframe
-            src={`https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&controls=0&modestbranding=1&rel=0`}
-            style={{ width: "100%", height: "100%", border: "none" }}
-            allow="autoplay; encrypted-media"
-            title={content.name}
+          <HlsRenderer
+            url={content.hlsInfo.url}
+            width={width}
+            height={height}
+            fallbackImagePath={content.hlsInfo.fallbackImagePath}
           />
         );
-      }
-
-      case "url":
-        if (!content.urlInfo?.url) return null;
-        return (
-          <Box
-            style={{
-              width: "100%",
-              height: "100%",
-              position: "relative",
-              overflow: "hidden",
-            }}
-          >
-            <iframe
-              src={content.urlInfo.url}
-              width="1920"
-              height="1080"
-              style={{
-                position: "absolute",
-                top: "50%",
-                left: "50%",
-                width: "1920px",
-                height: "1080px",
-                transform: `translate(-50%, -50%) scale(${Math.min(width / 1920, height / 1080)})`,
-                transformOrigin: "center",
-                border: "none",
-                backgroundColor: "white",
-                pointerEvents: "none",
-              }}
-              title={content.name}
-            />
-          </Box>
-        );
-
-      case "weather": {
-        if (!content.weatherInfo) return null;
-        const { locations, weatherType, apiUrl } = content.weatherInfo;
-        // 単一地点と複数地点でパラメータ名が異なる
-        const locationsParam = locations.length === 1 ? `location=${locations[0]}` : `locations=${locations.join(",")}`;
-        const weatherUrl = `${apiUrl}/api/image/${weatherType}?${locationsParam}`;
-
-        return (
-          <img
-            src={weatherUrl}
-            alt={content.name}
-            style={commonStyle}
-            onError={(e) => {
-              logger.error("ContentRenderer", `Failed to load weather image: ${weatherUrl}`);
-              e.currentTarget.src = ""; // Clear src to prevent infinite error loop
-            }}
-          />
-        );
-      }
-
-      case "csv":
-        // CSVコンテンツはimageUrlで表示
-        return <img src={imageUrl || undefined} alt={content.name} style={commonStyle} />;
 
       default:
         return <Text>サポートされていないコンテンツタイプです</Text>;
@@ -243,73 +171,169 @@ export const ContentRenderer = memo(function ContentRenderer({
   return <Box style={{ width, height, position: "relative", overflow: "hidden" }}>{renderContent()}</Box>;
 });
 
-// テキスト表示コンポーネント
-interface TextRendererProps {
-  textContent: TextContent;
+// HLSストリーム表示コンポーネント
+interface HlsRendererProps {
+  url: string;
   width: number;
   height: number;
+  fallbackImagePath?: string;
 }
 
-function TextRenderer({ textContent, width, height }: TextRendererProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
+function HlsRenderer({ url, width, height, fallbackImagePath }: HlsRendererProps) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
+  const maxRetries = 3;
 
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container || textContent.scrollType === "none") return;
+    if (!videoRef.current) return;
 
-    const scrollDistance =
-      textContent.scrollType === "horizontal" ? container.scrollWidth - width : container.scrollHeight - height;
-    const scrollDuration = (scrollDistance / textContent.scrollSpeed) * 1000; // スクロール速度に基づく
+    let mounted = true;
+    const video = videoRef.current;
 
-    let startTime: number;
-    const animate = (currentTime: number) => {
-      if (!startTime) startTime = currentTime;
-      const elapsed = currentTime - startTime;
-      const progress = Math.min(elapsed / scrollDuration, 1);
+    const initHls = async () => {
+      const HlsClass = await loadHls();
 
-      if (textContent.scrollType === "horizontal") {
-        container.scrollLeft = progress * scrollDistance;
-      } else {
-        container.scrollTop = progress * scrollDistance;
+      if (!mounted) return;
+
+      if (!HlsClass) {
+        // HLS.jsが読み込めない場合、ネイティブHLSサポートを試す
+        if (video.canPlayType("application/vnd.apple.mpegurl")) {
+          video.src = url;
+          video.play().catch((err) => {
+            logger.warn("HlsRenderer", "Native HLS playback failed", err);
+            setError("ストリームの再生に失敗しました");
+          });
+          setIsLoading(false);
+          return;
+        }
+
+        setError("HLSライブラリの読み込みに失敗しました");
+        return;
       }
 
-      if (progress < 1) {
-        requestAnimationFrame(animate);
+      if (!HlsClass.isSupported()) {
+        // Safari等のネイティブHLSサポートを試す
+        if (video.canPlayType("application/vnd.apple.mpegurl")) {
+          video.src = url;
+          video.play().catch((err) => {
+            logger.warn("HlsRenderer", "Native HLS playback failed", err);
+            setError("ストリームの再生に失敗しました");
+          });
+          setIsLoading(false);
+          return;
+        }
+
+        setError("このブラウザはHLSをサポートしていません");
+        return;
       }
+
+      // HLS.js を使用
+      const hls = new HlsClass({
+        enableWorker: true,
+        lowLatencyMode: true,
+        backBufferLength: 90,
+      });
+
+      hlsRef.current = hls;
+
+      hls.on(HlsClass.Events.MEDIA_ATTACHED, () => {
+        logger.debug("HlsRenderer", "HLS media attached");
+        hls.loadSource(url);
+      });
+
+      hls.on(HlsClass.Events.MANIFEST_PARSED, () => {
+        logger.debug("HlsRenderer", "HLS manifest parsed");
+        setIsLoading(false);
+        video.play().catch((err) => {
+          logger.warn("HlsRenderer", "Auto-play failed", err);
+        });
+      });
+
+      hls.on(HlsClass.Events.ERROR, (_, data) => {
+        if (data.fatal) {
+          logger.error("HlsRenderer", "HLS fatal error", data);
+          switch (data.type) {
+            case HlsClass.ErrorTypes.NETWORK_ERROR:
+              if (retryCount < maxRetries) {
+                setRetryCount((prev) => prev + 1);
+                hls.startLoad();
+              } else {
+                setError("ネットワークエラー: ストリームに接続できません");
+              }
+              break;
+            case HlsClass.ErrorTypes.MEDIA_ERROR:
+              hls.recoverMediaError();
+              break;
+            default:
+              setError("ストリームの再生に失敗しました");
+              break;
+          }
+        }
+      });
+
+      hls.attachMedia(video);
     };
 
-    requestAnimationFrame(animate);
-  }, [textContent, width, height]);
+    initHls();
 
-  const textStyle: CSSProperties = {
-    fontFamily: textContent.fontFamily,
-    fontSize: `${textContent.fontSize}px`,
-    color: textContent.color,
-    backgroundColor: textContent.backgroundColor,
-    textAlign: textContent.textAlign,
-    writingMode: textContent.writingMode === "vertical" ? "vertical-rl" : ("horizontal-tb" as const),
-    whiteSpace: textContent.scrollType !== "none" ? "nowrap" : "pre-wrap",
-    padding: "16px",
-    width: textContent.scrollType === "horizontal" ? "max-content" : "100%",
-    height: textContent.scrollType === "vertical" ? "max-content" : "100%",
-    minHeight: "100%",
-    display: "flex",
-    alignItems: textContent.scrollType === "none" ? "center" : "flex-start",
-    justifyContent:
-      textContent.textAlign === "center" ? "center" : textContent.textAlign === "end" ? "flex-end" : "flex-start",
-  };
+    return () => {
+      mounted = false;
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+    };
+  }, [url, retryCount]);
+
+  // エラー時にフォールバック画像を表示
+  if (error && fallbackImagePath) {
+    const fallbackUrl = apiClient.getFileUrl(fallbackImagePath);
+    return <img src={fallbackUrl} alt="Fallback" style={{ width: "100%", height: "100%", objectFit: "contain" }} />;
+  }
+
+  if (error) {
+    return (
+      <Box
+        style={{
+          width,
+          height,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: "#111",
+        }}
+      >
+        <Text c="red">{error}</Text>
+      </Box>
+    );
+  }
 
   return (
-    <Box
-      ref={containerRef}
-      style={{
-        width,
-        height,
-        overflow: textContent.scrollType !== "none" ? "hidden" : "auto",
-        backgroundColor: textContent.backgroundColor,
-      }}
-    >
-      <Box style={textStyle}>{textContent.content}</Box>
+    <Box style={{ width, height, position: "relative" }}>
+      {isLoading && (
+        <Box
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: "#111",
+          }}
+        >
+          <Text c="white">ストリームを読み込み中...</Text>
+        </Box>
+      )}
+      <video
+        ref={videoRef}
+        style={{ width: "100%", height: "100%", objectFit: "contain" }}
+        autoPlay
+        muted
+        playsInline
+      />
     </Box>
   );
 }

@@ -7,7 +7,7 @@ export interface LayoutUsageInfo {
   playlists: Array<{
     id: string;
     name: string;
-    device: string;
+    device: string | null;
   }>;
 }
 
@@ -24,7 +24,7 @@ export const checkLayoutUsage = async (
     const usedInPlaylists: Array<{
       id: string;
       name: string;
-      device: string;
+      device: string | null;
     }> = [];
 
     for (const playlistIndex of playlists) {

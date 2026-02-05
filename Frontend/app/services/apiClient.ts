@@ -9,6 +9,7 @@ export interface FileUploadResult {
   mimeType: string;
   size: number;
   path: string;
+  thumbnailPath?: string;
 }
 
 export interface ThumbnailUploadResult {
@@ -414,6 +415,70 @@ class ApiClient {
       const error = await response.json();
       throw new Error(error.error || "CSVファイルの削除に失敗しました");
     }
+  }
+
+  // ========================================
+  // ストリームAPI（ライブ配信）
+  // ========================================
+
+  async getStreams<T>(): Promise<T[]> {
+    const response = await fetch(`${this.baseUrl}/api/streams`);
+    if (!response.ok) {
+      throw new Error("ストリーム一覧の取得に失敗しました");
+    }
+    return response.json();
+  }
+
+  async createStream<T>(data: { name: string; description?: string }): Promise<T> {
+    const response = await fetch(`${this.baseUrl}/api/streams`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || "ストリームの作成に失敗しました");
+    }
+    return response.json();
+  }
+
+  async getStream<T>(id: string): Promise<T | null> {
+    const response = await fetch(`${this.baseUrl}/api/streams/${id}`);
+    if (response.status === 404) {
+      return null;
+    }
+    if (!response.ok) {
+      throw new Error("ストリームの取得に失敗しました");
+    }
+    return response.json();
+  }
+
+  async regenerateStreamKey<T>(id: string): Promise<T> {
+    const response = await fetch(`${this.baseUrl}/api/streams/${id}/regenerate-key`, {
+      method: "POST",
+    });
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || "ストリームキーの再生成に失敗しました");
+    }
+    return response.json();
+  }
+
+  async deleteStream(id: string): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/api/streams/${id}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) {
+      throw new Error("ストリームの削除に失敗しました");
+    }
+  }
+
+  async getStreamStatus<T>(id: string): Promise<T> {
+    const response = await fetch(`${this.baseUrl}/api/streams/${id}/status`);
+    if (!response.ok) {
+      throw new Error("ストリーム状態の取得に失敗しました");
+    }
+    return response.json();
   }
 
   // ========================================

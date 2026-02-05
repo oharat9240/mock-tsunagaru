@@ -1,17 +1,23 @@
-import { ActionIcon, Alert, AspectRatio, Box, Button, Divider, Group, List, Modal, Stack, Text } from "@mantine/core";
-import { modals } from "@mantine/modals";
 import {
-  IconChevronLeft,
-  IconChevronRight,
-  IconEdit,
-  IconExclamationCircle,
-  IconFile,
-  IconTrash,
-} from "@tabler/icons-react";
-import { useEffect, useState } from "react";
+  ActionIcon,
+  Alert,
+  AspectRatio,
+  Badge,
+  Box,
+  Button,
+  Divider,
+  Group,
+  List,
+  Modal,
+  Stack,
+  Text,
+} from "@mantine/core";
+import { modals } from "@mantine/modals";
+import { IconChevronLeft, IconChevronRight, IconEdit, IconExclamationCircle, IconTrash } from "@tabler/icons-react";
+import Hls from "hls.js";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useContent } from "~/hooks/useContent";
-import type { ContentIndex, ContentItem, CsvContent, TextContent, WeatherContent } from "~/types/content";
-import { getIframeSandboxAttributes } from "~/utils/urlValidator";
+import type { ContentIndex, ContentItem, HlsContent } from "~/types/content";
 import { ContentEditModal } from "./ContentEditModal";
 
 interface ContentPreviewModalProps {
@@ -24,7 +30,163 @@ interface ContentPreviewModalProps {
   onContentChange?: (contentId: string) => void;
 }
 
-export const ContentPreviewModal = ({
+// HLSプレイヤーコンポーネント
+const HlsPlayer = memo(function HlsPlayer({
+  url,
+  isLive,
+}: {
+  url: string;
+  isLive?: boolean;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !url) return;
+
+    setError(null);
+    setIsLoading(true);
+
+    // HLS.jsがサポートされている場合
+    if (Hls.isSupported()) {
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: isLive, // ライブ配信の場合は低遅延モード
+        liveSyncDurationCount: isLive ? 3 : 3,
+        liveMaxLatencyDurationCount: isLive ? 10 : 10,
+      });
+
+      hls.loadSource(url);
+      hls.attachMedia(video);
+
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        setIsLoading(false);
+        video.play().catch(() => {
+          // 自動再生が拒否された場合は無視
+        });
+      });
+
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) {
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              setError("ネットワークエラー: ストリームに接続できません");
+              // リトライ
+              hls.startLoad();
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              setError("メディアエラー: 再生できません");
+              hls.recoverMediaError();
+              break;
+            default:
+              setError("ストリームの読み込みに失敗しました");
+              hls.destroy();
+              break;
+          }
+        }
+      });
+
+      hlsRef.current = hls;
+
+      return () => {
+        hls.destroy();
+        hlsRef.current = null;
+      };
+    }
+    // Safari などネイティブHLSサポートの場合
+    if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = url;
+      video.addEventListener("loadedmetadata", () => {
+        setIsLoading(false);
+        video.play().catch(() => {});
+      });
+      video.addEventListener("error", () => {
+        setError("ストリームの読み込みに失敗しました");
+      });
+    } else {
+      setError("このブラウザはHLSをサポートしていません");
+    }
+  }, [url, isLive]);
+
+  return (
+    <Box pos="relative">
+      {isLive && (
+        <Badge
+          color="red"
+          variant="filled"
+          style={{
+            position: "absolute",
+            top: 8,
+            left: 8,
+            zIndex: 10,
+          }}
+        >
+          LIVE
+        </Badge>
+      )}
+      <AspectRatio ratio={16 / 9}>
+        {error ? (
+          <Box
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: "#1a1a1a",
+            }}
+          >
+            <Stack align="center" gap="sm">
+              <Text c="red" size="sm">
+                {error}
+              </Text>
+              {isLive && (
+                <Text c="dimmed" size="xs">
+                  配信が開始されていない可能性があります
+                </Text>
+              )}
+            </Stack>
+          </Box>
+        ) : (
+          <>
+            {/* biome-ignore lint/a11y/useMediaCaption: プレビュー用 */}
+            <video
+              ref={videoRef}
+              controls
+              playsInline
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "contain",
+                backgroundColor: "#1a1a1a",
+              }}
+            />
+            {isLoading && (
+              <Box
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: "rgba(0,0,0,0.5)",
+                }}
+              >
+                <Text c="white">読み込み中...</Text>
+              </Box>
+            )}
+          </>
+        )}
+      </AspectRatio>
+    </Box>
+  );
+});
+
+export const ContentPreviewModal = memo(function ContentPreviewModal({
   opened,
   onClose,
   contentId,
@@ -32,13 +194,49 @@ export const ContentPreviewModal = ({
   onContentDeleted,
   onContentUpdated,
   onContentChange,
-}: ContentPreviewModalProps) => {
+}: ContentPreviewModalProps) {
   const [content, setContent] = useState<ContentItem | null>(null);
   const [loading, setLoading] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const { getContentById, updateContent, deleteContent, deleteContentForced, checkContentUsageStatus, getFileUrl } =
     useContent();
+
+  // 関数参照を安定化するためのref
+  const getContentByIdRef = useRef(getContentById);
+  const getFileUrlRef = useRef(getFileUrl);
+
+  // refを常に最新に保つ
+  useEffect(() => {
+    getContentByIdRef.current = getContentById;
+    getFileUrlRef.current = getFileUrl;
+  });
+
+  // コンテンツ読み込み関数（useCallbackでメモ化）
+  const loadContent = useCallback(async (id: string) => {
+    setLoading(true);
+    try {
+      const loaded = await getContentByIdRef.current(id);
+      setContent(loaded);
+
+      // プレビューURLを設定
+      if (loaded) {
+        if (loaded.fileInfo?.storagePath) {
+          setPreviewUrl(getFileUrlRef.current(loaded.fileInfo.storagePath));
+        } else if (loaded.hlsInfo?.url) {
+          setPreviewUrl(loaded.hlsInfo.url);
+        } else {
+          setPreviewUrl(null);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to load content:", error);
+      setContent(null);
+      setPreviewUrl(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!opened || !contentId) {
@@ -47,591 +245,253 @@ export const ContentPreviewModal = ({
       return;
     }
 
-    const loadContent = async () => {
-      setLoading(true);
-      try {
-        const contentData = await getContentById(contentId);
-        setContent(contentData);
-
-        // プレビューURL生成（サーバーから取得）
-        if (contentData?.type === "image" || contentData?.type === "video") {
-          if (contentData.fileInfo?.storagePath) {
-            const url = getFileUrl(contentData.fileInfo.storagePath);
-            setPreviewUrl(url);
-          }
-        } else if (contentData?.type === "csv" && contentData.csvInfo?.renderedImagePath) {
-          // CSVの場合はレンダリング済み画像を表示
-          const url = getFileUrl(contentData.csvInfo.renderedImagePath);
-          setPreviewUrl(url);
-        }
-      } catch (error) {
-        console.error("Failed to load content:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadContent();
-  }, [opened, contentId, getContentById, getFileUrl]);
+    loadContent(contentId);
+  }, [opened, contentId, loadContent]);
 
   const handleClose = () => {
+    setContent(null);
     setPreviewUrl(null);
     onClose();
   };
 
-  const renderPreview = () => {
-    if (loading) {
-      return (
-        <Box h="400px" display="flex" style={{ alignItems: "center", justifyContent: "center" }}>
-          <Text>読み込み中...</Text>
-        </Box>
-      );
-    }
+  // ナビゲーション
+  const currentIndex = allContents.findIndex((c) => c.id === contentId);
+  const hasPrevious = currentIndex > 0;
+  const hasNext = currentIndex < allContents.length - 1;
 
-    if (!content) {
-      return (
-        <Box h="400px" display="flex" style={{ alignItems: "center", justifyContent: "center" }}>
-          <Text>コンテンツが見つかりません</Text>
-        </Box>
-      );
-    }
-
-    // 画像プレビュー（CSVの場合も含む）
-    if ((content.type === "image" || content.type === "csv") && previewUrl) {
-      return (
-        <Box ta="center" style={{ maxHeight: "70vh", overflow: "hidden" }}>
-          <img
-            src={previewUrl}
-            alt={content.name}
-            style={{
-              maxWidth: "100%",
-              maxHeight: "70vh",
-              objectFit: "contain",
-              borderRadius: "var(--mantine-radius-md)",
-            }}
-          />
-        </Box>
-      );
-    }
-
-    // 動画プレビュー
-    if (content.type === "video" && previewUrl) {
-      return (
-        <Box ta="center" style={{ maxHeight: "70vh" }}>
-          <video
-            src={previewUrl}
-            controls
-            autoPlay
-            style={{
-              maxWidth: "100%",
-              maxHeight: "70vh",
-              borderRadius: "var(--mantine-radius-md)",
-            }}
-          >
-            <track kind="captions" />
-          </video>
-        </Box>
-      );
-    }
-
-    // YouTubeプレビュー
-    if (content.type === "youtube" && content.urlInfo?.url) {
-      const videoId = extractYouTubeVideoId(content.urlInfo.url);
-      if (videoId) {
-        return (
-          <Box ta="center">
-            <iframe
-              width="100%"
-              height="400"
-              src={`https://www.youtube.com/embed/${videoId}?autoplay=1`}
-              title={content.name}
-              frameBorder="0"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen
-              style={{ borderRadius: "var(--mantine-radius-md)" }}
-            />
-          </Box>
-        );
-      }
-    }
-
-    // 気象情報プレビュー
-    if (content.type === "weather" && content.weatherInfo) {
-      const { locations, weatherType, apiUrl } = content.weatherInfo;
-      const locationsParam = locations.length === 1 ? `location=${locations[0]}` : `locations=${locations.join(",")}`;
-      const weatherUrl = `${apiUrl}/api/image/${weatherType}?${locationsParam}`;
-
-      return (
-        <Box display="flex" style={{ alignItems: "center", justifyContent: "center" }}>
-          <img
-            src={weatherUrl}
-            alt={content.name}
-            style={{ maxWidth: "100%", maxHeight: "600px", objectFit: "contain" }}
-            onError={(e) => {
-              e.currentTarget.src =
-                "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIwIiBoZWlnaHQ9IjE4MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjMDg5MWIyIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIiBmaWxsPSJ3aGl0ZSIgZm9udC1zaXplPSIxNCI+5rCX6LGh5oOF5aCxPC90ZXh0Pjwvc3ZnPg==";
-            }}
-          />
-        </Box>
-      );
-    }
-
-    // テキストプレビュー
-    if (content.type === "text" && content.textInfo) {
-      const {
-        content: textContent,
-        writingMode,
-        fontFamily,
-        textAlign,
-        color,
-        backgroundColor,
-        fontSize,
-        scrollType = "none",
-        scrollSpeed = 3,
-      } = content.textInfo;
-
-      // テキストの長さに応じて適切な幅を計算
-      const singleLineText = textContent.replace(/\n/g, " ");
-      const textLength = singleLineText.length;
-      const estimatedWidth = Math.max(400, Math.min(textLength * fontSize * 0.6, 1200));
-
-      // スクロールアニメーションのCSS
-      const scrollAnimation =
-        scrollType !== "none"
-          ? `@keyframes textScrollModal {
-              0% { transform: translate${scrollType === "horizontal" ? "X" : "Y"}(100%); }
-              100% { transform: translate${scrollType === "horizontal" ? "X" : "Y"}(calc(-100% - ${estimatedWidth}px)); }
-            }`
-          : "";
-
-      return (
-        <Box
-          display="flex"
-          pos="relative"
-          w="100%"
-          style={{
-            minHeight: "400px",
-            backgroundColor,
-            border: "1px solid #e5e5e5",
-            borderRadius: "var(--mantine-radius-md)",
-            alignItems: "center",
-            justifyContent: textAlign === "center" ? "center" : textAlign === "end" ? "flex-end" : "flex-start",
-            overflow: "hidden",
-            maxWidth: "100%",
-          }}
-        >
-          <style>{scrollAnimation}</style>
-          <div
-            style={{
-              fontFamily,
-              fontSize: `${fontSize}px`,
-              color,
-              writingMode: writingMode === "vertical" ? "vertical-rl" : "horizontal-tb",
-              whiteSpace: "nowrap",
-              padding: "20px",
-              minWidth: `${estimatedWidth}px`,
-              width: "max-content",
-              ...(scrollType !== "none" ? { animation: `textScrollModal ${11 - scrollSpeed}s linear infinite` } : {}),
-            }}
-          >
-            {singleLineText}
-          </div>
-        </Box>
-      );
-    }
-
-    // URLプレビュー（iframe埋め込み）
-    if (content.type === "url" && content.urlInfo?.url) {
-      return (
-        <AspectRatio ratio={16 / 9} maw="100%">
-          <Box
-            style={{
-              width: "100%",
-              height: "100%",
-              position: "relative",
-              overflow: "hidden",
-              border: "1px solid #e5e5e5",
-              borderRadius: "var(--mantine-radius-md)",
-              backgroundColor: "#ffffff",
-            }}
-          >
-            <Box
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: "100%",
-                height: "100%",
-                overflow: "hidden",
-              }}
-            >
-              <iframe
-                src={content.urlInfo.url}
-                title={content.name}
-                width="1920"
-                height="1080"
-                style={{
-                  position: "absolute",
-                  top: "50%",
-                  left: "50%",
-                  width: "1920px",
-                  height: "1080px",
-                  transform: "translate(-50%, -50%) scale(var(--scale-factor))",
-                  transformOrigin: "center",
-                  border: "none",
-                  backgroundColor: "white",
-                  pointerEvents: "none",
-                  // CSS変数でスケールファクターを設定
-                  ["--scale-factor" as string]: "0.47", // 900px幅の場合: 900 / 1920 ≈ 0.47
-                }}
-                sandbox={getIframeSandboxAttributes()}
-                loading="lazy"
-              />
-            </Box>
-          </Box>
-        </AspectRatio>
-      );
-    }
-
-    // その他のタイプ
-    return (
-      <Box h="400px" display="flex" style={{ alignItems: "center", justifyContent: "center" }}>
-        <Stack align="center" gap="md">
-          <IconFile size={48} />
-          <Text size="lg" fw={500}>
-            {content.name}
-          </Text>
-          <Text size="sm" c="dimmed">
-            このコンテンツタイプはプレビューできません
-          </Text>
-        </Stack>
-      </Box>
-    );
-  };
-
-  const getModalTitle = () => {
-    if (!content) return "コンテンツプレビュー";
-    return content.name;
-  };
-
-  const getCurrentContentIndex = () => {
-    if (!contentId || !allContents.length) return -1;
-    return allContents.findIndex((item) => item.id === contentId);
-  };
-
-  const canNavigatePrev = () => {
-    const currentIndex = getCurrentContentIndex();
-    return currentIndex > 0;
-  };
-
-  const canNavigateNext = () => {
-    const currentIndex = getCurrentContentIndex();
-    return currentIndex >= 0 && currentIndex < allContents.length - 1;
-  };
-
-  const handleNavigatePrev = () => {
-    const currentIndex = getCurrentContentIndex();
-    if (currentIndex > 0) {
-      const prevContent = allContents[currentIndex - 1];
-      onContentChange?.(prevContent.id);
+  const handlePrevious = () => {
+    if (hasPrevious && onContentChange) {
+      onContentChange(allContents[currentIndex - 1].id);
     }
   };
 
-  const handleNavigateNext = () => {
-    const currentIndex = getCurrentContentIndex();
-    if (currentIndex >= 0 && currentIndex < allContents.length - 1) {
-      const nextContent = allContents[currentIndex + 1];
-      onContentChange?.(nextContent.id);
+  const handleNext = () => {
+    if (hasNext && onContentChange) {
+      onContentChange(allContents[currentIndex + 1].id);
     }
   };
 
-  const handleEditStart = () => {
+  // 編集モーダルを開く
+  const handleEdit = () => {
     setIsEditModalOpen(true);
   };
 
-  const handleEditModalClose = () => {
-    setIsEditModalOpen(false);
-  };
-
-  const handleEditSubmit = async (data: {
-    id: string;
-    name: string;
-    tags: string[];
-    textInfo?: TextContent;
-    urlInfo?: { title?: string; description?: string };
-    weatherInfo?: WeatherContent;
-    csvInfo?: Partial<CsvContent> & { regenerateImage?: boolean };
-    csvBackgroundFile?: File | null;
-    csvFile?: File | null;
-  }) => {
+  // 編集の保存
+  const handleEditSubmit = async (data: { id: string; name: string; tags: string[]; hlsInfo?: HlsContent }) => {
     try {
-      // 更新データを構築
-      const updateData: Parameters<typeof updateContent>[1] = {
+      await updateContent(data.id, {
         name: data.name,
         tags: data.tags,
-        updatedAt: new Date().toISOString(),
-      };
-
-      // コンテンツタイプに応じて追加情報を設定
-      if (data.textInfo) {
-        updateData.textInfo = data.textInfo;
-      }
-      if (data.urlInfo && content) {
-        // 既存のurlInfo取得のためコンテンツを再取得
-        const existingContent = await getContentById(data.id);
-        if (existingContent?.urlInfo) {
-          updateData.urlInfo = {
-            ...existingContent.urlInfo,
-            ...data.urlInfo,
-          };
-        }
-      }
-      if (data.weatherInfo) {
-        updateData.weatherInfo = data.weatherInfo;
-      }
-      if (data.csvInfo) {
-        updateData.csvInfo = data.csvInfo as CsvContent;
-      }
-
-      await updateContent(data.id, updateData);
+        hlsInfo: data.hlsInfo,
+      });
+      // コンテンツを再読み込み（refを使用して安定化）
+      const reloaded = await getContentByIdRef.current(data.id);
+      setContent(reloaded);
       onContentUpdated?.();
-
-      // コンテンツを再読み込み
-      const updatedContent = await getContentById(data.id);
-      setContent(updatedContent);
-
-      setIsEditModalOpen(false);
     } catch (error) {
       console.error("Failed to update content:", error);
-      throw error; // ContentEditModalでエラーをキャッチできるように再throw
+      throw error;
     }
   };
 
+  // 削除
   const handleDelete = async () => {
     if (!content) return;
 
-    try {
-      // 使用状況をチェック
-      const usageInfo = await checkContentUsageStatus(content.id);
+    // 使用状況をチェック
+    const usageInfo = await checkContentUsageStatus(content.id);
 
-      if (usageInfo.isUsed) {
-        // 使用中の場合は強制削除の確認を表示
-        modals.openConfirmModal({
-          title: "コンテンツを削除",
-          children: (
-            <Box>
-              <Text size="sm" mb="md">
-                「{content.name}」を削除しますか？この操作は元に戻せません。
-              </Text>
-              <Text size="sm" mb="sm">
-                このコンテンツは以下のプレイリストで使用されています：
-              </Text>
-              <List size="sm" mb="md">
-                {usageInfo.playlists.map((playlist) => (
-                  <List.Item key={playlist.id}>
-                    <Text size="sm" fw={500}>
-                      {playlist.name} (デバイス: {playlist.device})
-                    </Text>
-                  </List.Item>
-                ))}
-              </List>
-              <Alert icon={<IconExclamationCircle size={16} />} color="orange" mb="md">
-                削除すると、これらのプレイリストからも自動的に削除されます。
-              </Alert>
-            </Box>
-          ),
-          labels: { confirm: "削除", cancel: "キャンセル" },
-          confirmProps: { color: "red" },
-          onConfirm: async () => {
-            try {
-              await deleteContentForced(content.id);
-              onContentDeleted?.();
-              onClose();
-            } catch (error) {
-              console.error("Failed to delete content:", error);
-            }
-          },
-        });
-      } else {
-        // 使用されていない場合は通常の削除確認
-        modals.openConfirmModal({
-          title: "コンテンツを削除",
-          children: (
-            <Box>
-              <Text size="sm" mb="md">
-                「{content.name}」を削除しますか？この操作は元に戻せません。
-              </Text>
-              <Alert icon={<IconExclamationCircle size={16} />} color="gray">
-                このコンテンツはどのプレイリストでも使用されていません。
-              </Alert>
-            </Box>
-          ),
-          labels: { confirm: "削除", cancel: "キャンセル" },
-          confirmProps: { color: "red" },
-          onConfirm: async () => {
-            try {
-              await deleteContent(content.id);
-              onContentDeleted?.();
-              onClose();
-            } catch (error) {
-              console.error("Failed to delete content:", error);
-            }
-          },
-        });
-      }
-    } catch (error) {
-      console.error("Failed to check content usage:", error);
+    if (usageInfo.isUsed) {
+      // 使用中の場合は確認ダイアログを表示
+      modals.openConfirmModal({
+        title: "コンテンツの削除確認",
+        children: (
+          <Stack gap="sm">
+            <Alert color="yellow" icon={<IconExclamationCircle size={16} />}>
+              このコンテンツは以下のプレイリストで使用されています
+            </Alert>
+            <List size="sm">
+              {usageInfo.playlists.map((playlist) => (
+                <List.Item key={playlist.id}>{playlist.name}</List.Item>
+              ))}
+            </List>
+            <Text size="sm">削除すると、これらのプレイリストからも自動的に削除されます。</Text>
+          </Stack>
+        ),
+        labels: { confirm: "削除する", cancel: "キャンセル" },
+        confirmProps: { color: "red" },
+        onConfirm: async () => {
+          try {
+            await deleteContentForced(content.id);
+            onContentDeleted?.();
+            handleClose();
+          } catch (error) {
+            console.error("Failed to delete content:", error);
+          }
+        },
+      });
+    } else {
+      // 使用されていない場合は通常の確認ダイアログ
+      modals.openConfirmModal({
+        title: "コンテンツの削除確認",
+        children: <Text size="sm">「{content.name}」を削除しますか？この操作は取り消せません。</Text>,
+        labels: { confirm: "削除する", cancel: "キャンセル" },
+        confirmProps: { color: "red" },
+        onConfirm: async () => {
+          try {
+            await deleteContent(content.id);
+            onContentDeleted?.();
+            handleClose();
+          } catch (error) {
+            console.error("Failed to delete content:", error);
+          }
+        },
+      });
     }
   };
 
-  const renderNavigationButtons = () => {
-    if (!allContents.length || allContents.length <= 1) return null;
+  // 現在のコンテンツをContentIndexとして取得
+  const currentContentIndex: ContentIndex | null = content
+    ? {
+        id: content.id,
+        name: content.name,
+        type: content.type,
+        tags: content.tags,
+        size: content.fileInfo?.size ?? null,
+        url: content.hlsInfo?.url ?? null,
+        createdAt: content.createdAt,
+        updatedAt: content.updatedAt ?? null,
+      }
+    : null;
 
-    const currentIndex = getCurrentContentIndex();
-    const totalCount = allContents.length;
-
-    return (
-      <Group justify="space-between" align="center">
-        <ActionIcon
-          variant="light"
-          disabled={!canNavigatePrev()}
-          onClick={handleNavigatePrev}
-          aria-label="前のコンテンツ"
+  const renderPreview = () => {
+    if (!content || !previewUrl) {
+      return (
+        <Box
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            height: "400px",
+            backgroundColor: "#f5f5f5",
+          }}
         >
-          <IconChevronLeft size={18} />
-        </ActionIcon>
+          <Text c="dimmed">プレビューを表示できません</Text>
+        </Box>
+      );
+    }
 
-        <Text size="sm" c="dimmed">
-          {currentIndex + 1} / {totalCount}
-        </Text>
+    switch (content.type) {
+      case "video":
+        return (
+          <AspectRatio ratio={16 / 9}>
+            {/* biome-ignore lint/a11y/useMediaCaption: 字幕は任意のプレビュー機能 */}
+            <video
+              key={`video-${content.id}`}
+              src={previewUrl}
+              controls
+              playsInline
+              style={{ width: "100%", height: "100%", objectFit: "contain" }}
+            />
+          </AspectRatio>
+        );
 
-        <ActionIcon
-          variant="light"
-          disabled={!canNavigateNext()}
-          onClick={handleNavigateNext}
-          aria-label="次のコンテンツ"
-        >
-          <IconChevronRight size={18} />
-        </ActionIcon>
-      </Group>
-    );
-  };
+      case "image":
+        return (
+          <AspectRatio ratio={16 / 9}>
+            <img
+              src={previewUrl}
+              alt={content.name}
+              style={{ width: "100%", height: "100%", objectFit: "contain", backgroundColor: "#f5f5f5" }}
+            />
+          </AspectRatio>
+        );
 
-  const renderActionButtons = () => {
-    return (
-      <Group justify="space-between">
-        <Button variant="light" leftSection={<IconEdit size={16} />} onClick={handleEditStart}>
-          編集
-        </Button>
+      case "hls":
+        return <HlsPlayer url={previewUrl} isLive={content.hlsInfo?.isLive} />;
 
-        <Button color="red" variant="light" leftSection={<IconTrash size={16} />} onClick={handleDelete}>
-          削除
-        </Button>
-      </Group>
-    );
-  };
-
-  const getContentInfo = () => {
-    if (!content) return null;
-
-    return (
-      <Group gap="xs" mt="sm">
-        <Text size="sm" c="dimmed">
-          タイプ: {getContentTypeLabel(content.type)}
-        </Text>
-        {content.fileInfo?.size && (
-          <Text size="sm" c="dimmed">
-            サイズ: {formatFileSize(content.fileInfo.size)}
-          </Text>
-        )}
-        {content.fileInfo?.metadata?.width && content.fileInfo?.metadata?.height && (
-          <Text size="sm" c="dimmed">
-            解像度: {content.fileInfo.metadata.width}×{content.fileInfo.metadata.height}
-          </Text>
-        )}
-        {content.fileInfo?.metadata?.duration && (
-          <Text size="sm" c="dimmed">
-            再生時間: {formatDuration(content.fileInfo.metadata.duration)}
-          </Text>
-        )}
-      </Group>
-    );
+      default:
+        return (
+          <Box
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              height: "400px",
+              backgroundColor: "#f5f5f5",
+            }}
+          >
+            <Text c="dimmed">プレビューを表示できません</Text>
+          </Box>
+        );
+    }
   };
 
   return (
-    <Modal
-      opened={opened}
-      onClose={handleClose}
-      title={getModalTitle()}
-      centered
-      size="xl"
-      styles={{
-        content: {
-          maxWidth: "90vw",
-        },
-      }}
-    >
-      <Stack gap="md">
-        {/* ナビゲーションボタン */}
-        {renderNavigationButtons()}
+    <>
+      <Modal opened={opened} onClose={handleClose} title={content?.name || "コンテンツ"} centered size="lg">
+        <Stack gap="md">
+          {loading ? (
+            <Box
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                height: "400px",
+              }}
+            >
+              <Text c="dimmed">読み込み中...</Text>
+            </Box>
+          ) : (
+            renderPreview()
+          )}
 
-        {renderPreview()}
+          {content && (
+            <>
+              <Divider />
+              <Group justify="space-between">
+                <Group gap="xs">
+                  <ActionIcon
+                    variant="subtle"
+                    size="lg"
+                    onClick={handlePrevious}
+                    disabled={!hasPrevious}
+                    aria-label="前のコンテンツ"
+                  >
+                    <IconChevronLeft size={20} />
+                  </ActionIcon>
+                  <ActionIcon
+                    variant="subtle"
+                    size="lg"
+                    onClick={handleNext}
+                    disabled={!hasNext}
+                    aria-label="次のコンテンツ"
+                  >
+                    <IconChevronRight size={20} />
+                  </ActionIcon>
+                </Group>
+                <Group gap="xs">
+                  <Button variant="subtle" leftSection={<IconEdit size={16} />} onClick={handleEdit}>
+                    編集
+                  </Button>
+                  <Button variant="subtle" color="red" leftSection={<IconTrash size={16} />} onClick={handleDelete}>
+                    削除
+                  </Button>
+                </Group>
+              </Group>
+            </>
+          )}
+        </Stack>
+      </Modal>
 
-        <Divider />
-
-        {/* コンテンツ情報 */}
-        {getContentInfo()}
-
-        {/* アクションボタン */}
-        {renderActionButtons()}
-      </Stack>
-
-      {/* ContentEditModal */}
-      {content && (
+      {currentContentIndex && (
         <ContentEditModal
           opened={isEditModalOpen}
-          onClose={handleEditModalClose}
-          content={content as ContentIndex}
+          onClose={() => setIsEditModalOpen(false)}
+          content={currentContentIndex}
           onSubmit={handleEditSubmit}
         />
       )}
-    </Modal>
+    </>
   );
-};
-
-// ヘルパー関数
-const extractYouTubeVideoId = (url: string): string | null => {
-  const regex = /(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\n?#]+)/;
-  const match = url.match(regex);
-  return match ? match[1] : null;
-};
-
-const getContentTypeLabel = (type: string): string => {
-  const labels: Record<string, string> = {
-    video: "動画",
-    image: "画像",
-    text: "テキスト",
-    youtube: "YouTube",
-    url: "URL",
-  };
-  return labels[type] || type;
-};
-
-const formatFileSize = (bytes: number): string => {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${Number.parseFloat((bytes / k ** i).toFixed(1))} ${sizes[i]}`;
-};
-
-const formatDuration = (seconds: number): string => {
-  const hrs = Math.floor(seconds / 3600);
-  const mins = Math.floor((seconds % 3600) / 60);
-  const secs = Math.floor(seconds % 60);
-
-  if (hrs > 0) {
-    return `${hrs}:${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
-  }
-  return `${mins}:${secs.toString().padStart(2, "0")}`;
-};
+});

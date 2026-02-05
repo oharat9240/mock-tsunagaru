@@ -1,5 +1,5 @@
 import { Flex } from "@mantine/core";
-import { IconBrandYoutube, IconFile, IconFileText, IconLink, IconPhoto, IconVideo } from "@tabler/icons-react";
+import { IconBroadcast, IconFile, IconPhoto, IconVideo } from "@tabler/icons-react";
 import type { ContentType } from "~/types/content";
 
 interface ContentTypeBadgeProps {
@@ -14,12 +14,8 @@ export const ContentTypeBadge = ({ contentType }: ContentTypeBadgeProps) => {
         return <IconVideo {...iconProps} />;
       case "image":
         return <IconPhoto {...iconProps} />;
-      case "text":
-        return <IconFileText {...iconProps} />;
-      case "youtube":
-        return <IconBrandYoutube {...iconProps} />;
-      case "url":
-        return <IconLink {...iconProps} />;
+      case "hls":
+        return <IconBroadcast {...iconProps} />;
       default:
         return <IconFile {...iconProps} />;
     }
@@ -31,12 +27,8 @@ export const ContentTypeBadge = ({ contentType }: ContentTypeBadgeProps) => {
         return "blue";
       case "image":
         return "green";
-      case "text":
-        return "orange";
-      case "youtube":
-        return "red";
-      case "url":
-        return "purple";
+      case "hls":
+        return "violet";
       default:
         return "gray";
     }

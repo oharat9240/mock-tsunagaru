@@ -54,6 +54,9 @@ export const SignageEngine = memo(function SignageEngine({
   // コンテンツ変更を追跡するキー（強制再レンダリング用）
   const [contentKeys, setContentKeys] = useState<Map<string, number>>(new Map());
 
+  // エンジン時間（秒単位）
+  const [engineTime, setEngineTime] = useState(0);
+
   // エンジン初期化
   // biome-ignore lint/correctness/useExhaustiveDependencies: playlist.id/layout.idの変更時のみ再初期化する（オブジェクト全体の依存は意図的に避ける）
   useEffect(() => {
@@ -88,6 +91,15 @@ export const SignageEngine = memo(function SignageEngine({
         case "error":
           setError(event.error);
           onError?.(event.error);
+          break;
+
+        case "timeUpdate":
+          setEngineTime(event.currentTime);
+          break;
+
+        case "preload":
+          // プリロードイベントはログ出力のみ（将来の拡張用）
+          logger.debug("SignageEngine", `Preload requested for region ${event.regionId}, starts in ${event.startsIn}s`);
           break;
       }
     });
@@ -226,6 +238,8 @@ export const SignageEngine = memo(function SignageEngine({
               duration={currentContent.duration}
               width={region.width}
               height={region.height}
+              engineTime={engineTime}
+              contentStartTime={currentContent.startTime}
               onComplete={() => handleContentComplete(region.id)}
             />
           </Box>

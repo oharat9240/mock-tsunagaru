@@ -1,9 +1,22 @@
 import { Box, Text } from "@mantine/core";
-import type { CSSProperties } from "react";
+import type Hls from "hls.js";
 import { memo, useEffect, useRef, useState } from "react";
 import { apiClient } from "~/services/apiClient";
-import type { ContentItem, TextContent } from "~/types/content";
-import { extractYouTubeVideoId } from "~/types/content";
+import type { ContentItem } from "~/types/content";
+import { logger } from "~/utils/logger";
+
+// HLS.jsを動的にインポート
+let HlsModule: typeof import("hls.js") | null = null;
+const loadHls = async (): Promise<typeof import("hls.js")["default"] | null> => {
+  if (HlsModule) return HlsModule.default;
+  try {
+    HlsModule = await import("hls.js");
+    return HlsModule.default;
+  } catch (e) {
+    logger.error("ContentRendererFullscreen", "Failed to load hls.js", e);
+    return null;
+  }
+};
 
 interface ContentRendererFullscreenProps {
   content: ContentItem;
@@ -43,11 +56,8 @@ export const ContentRendererFullscreen = memo(function ContentRendererFullscreen
       } else {
         setImageUrl(url);
       }
-    } else if (content.type === "csv" && content.csvInfo?.renderedImagePath) {
-      const url = apiClient.getFileUrl(content.csvInfo.renderedImagePath);
-      setImageUrl(url);
     }
-  }, [content.type, content.fileInfo, content.csvInfo]);
+  }, [content.type, content.fileInfo]);
 
   // 動画の再生/一時停止制御
   useEffect(() => {
@@ -142,69 +152,18 @@ export const ContentRendererFullscreen = memo(function ContentRendererFullscreen
       case "image":
         return <img src={imageUrl || undefined} alt={content.name} style={commonStyle} />;
 
-      case "text":
-        if (!content.textInfo) return null;
+      case "hls":
+        if (!content.hlsInfo?.url) return null;
         return (
-          <TextRendererFullscreen textContent={content.textInfo} width={width} height={height} isPaused={isPaused} />
-        );
-
-      case "youtube": {
-        if (!content.urlInfo?.url) return null;
-        const videoId = extractYouTubeVideoId(content.urlInfo.url);
-        if (!videoId) return null;
-        return (
-          <iframe
-            src={`https://www.youtube.com/embed/${videoId}?autoplay=${isPaused ? 0 : 1}&mute=${isMuted ? 1 : 0}&controls=0&modestbranding=1&rel=0`}
-            style={{ width: "100%", height: "100%", border: "none" }}
-            allow="autoplay; encrypted-media"
-            title={content.name}
+          <HlsRendererFullscreen
+            url={content.hlsInfo.url}
+            width={width}
+            height={height}
+            fallbackImagePath={content.hlsInfo.fallbackImagePath}
+            isPaused={isPaused}
+            isMuted={isMuted}
           />
         );
-      }
-
-      case "url":
-        if (!content.urlInfo?.url) return null;
-        return (
-          <Box
-            style={{
-              width: "100%",
-              height: "100%",
-              position: "relative",
-              overflow: "hidden",
-            }}
-          >
-            <iframe
-              src={content.urlInfo.url}
-              width="1920"
-              height="1080"
-              style={{
-                position: "absolute",
-                top: "50%",
-                left: "50%",
-                width: "1920px",
-                height: "1080px",
-                transform: `translate(-50%, -50%) scale(${Math.min(width / 1920, height / 1080)})`,
-                transformOrigin: "center",
-                border: "none",
-                backgroundColor: "white",
-                pointerEvents: "none",
-              }}
-              title={content.name}
-            />
-          </Box>
-        );
-
-      case "weather": {
-        if (!content.weatherInfo) return null;
-        const { locations, weatherType, apiUrl } = content.weatherInfo;
-        const locationsParam = locations.length === 1 ? `location=${locations[0]}` : `locations=${locations.join(",")}`;
-        const weatherUrl = `${apiUrl}/api/image/${weatherType}?${locationsParam}`;
-
-        return <img src={weatherUrl} alt={content.name} style={commonStyle} />;
-      }
-
-      case "csv":
-        return <img src={imageUrl || undefined} alt={content.name} style={commonStyle} />;
 
       default:
         return <Text c="white">サポートされていないコンテンツタイプです</Text>;
@@ -218,98 +177,202 @@ export const ContentRendererFullscreen = memo(function ContentRendererFullscreen
   );
 });
 
-// テキスト表示コンポーネント（フルスクリーン版）
-interface TextRendererFullscreenProps {
-  textContent: TextContent;
+// HLSストリーム表示コンポーネント（フルスクリーン版）
+interface HlsRendererFullscreenProps {
+  url: string;
   width: number;
   height: number;
+  fallbackImagePath?: string;
   isPaused: boolean;
+  isMuted: boolean;
 }
 
-function TextRendererFullscreen({ textContent, width, height, isPaused }: TextRendererFullscreenProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const animationRef = useRef<number | null>(null);
-  const scrollPositionRef = useRef<number>(0);
+function HlsRendererFullscreen({
+  url,
+  width,
+  height,
+  fallbackImagePath,
+  isPaused,
+  isMuted,
+}: HlsRendererFullscreenProps) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
+  const maxRetries = 3;
 
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container || textContent.scrollType === "none") return;
+    if (!videoRef.current) return;
 
-    const scrollDistance =
-      textContent.scrollType === "horizontal" ? container.scrollWidth - width : container.scrollHeight - height;
-    const scrollDuration = (scrollDistance / textContent.scrollSpeed) * 1000;
+    let mounted = true;
+    const video = videoRef.current;
 
-    let startTime: number | null = null;
-    let pauseOffset = 0;
+    const initHls = async () => {
+      const HlsClass = await loadHls();
 
-    const animate = (currentTime: number) => {
-      if (isPaused) {
-        // 一時停止中は現在の位置を保存
-        if (startTime !== null) {
-          pauseOffset = currentTime - startTime;
+      if (!mounted) return;
+
+      if (!HlsClass) {
+        // HLS.jsが読み込めない場合、ネイティブHLSサポートを試す
+        if (video.canPlayType("application/vnd.apple.mpegurl")) {
+          video.src = url;
+          if (!isPaused) {
+            video.play().catch((err) => {
+              logger.warn("HlsRendererFullscreen", "Native HLS playback failed", err);
+              setError("ストリームの再生に失敗しました");
+            });
+          }
+          setIsLoading(false);
+          return;
         }
-        animationRef.current = requestAnimationFrame(animate);
+
+        setError("HLSライブラリの読み込みに失敗しました");
         return;
       }
 
-      if (startTime === null) {
-        startTime = currentTime - pauseOffset;
+      if (!HlsClass.isSupported()) {
+        // Safari等のネイティブHLSサポートを試す
+        if (video.canPlayType("application/vnd.apple.mpegurl")) {
+          video.src = url;
+          if (!isPaused) {
+            video.play().catch((err) => {
+              logger.warn("HlsRendererFullscreen", "Native HLS playback failed", err);
+              setError("ストリームの再生に失敗しました");
+            });
+          }
+          setIsLoading(false);
+          return;
+        }
+
+        setError("このブラウザはHLSをサポートしていません");
+        return;
       }
 
-      const elapsed = currentTime - startTime;
-      const progress = Math.min(elapsed / scrollDuration, 1);
+      // HLS.js を使用
+      const hls = new HlsClass({
+        enableWorker: true,
+        lowLatencyMode: true,
+        backBufferLength: 90,
+      });
 
-      if (textContent.scrollType === "horizontal") {
-        container.scrollLeft = progress * scrollDistance;
-      } else {
-        container.scrollTop = progress * scrollDistance;
-      }
+      hlsRef.current = hls;
 
-      scrollPositionRef.current = progress;
+      hls.on(HlsClass.Events.MEDIA_ATTACHED, () => {
+        logger.debug("HlsRendererFullscreen", "HLS media attached");
+        hls.loadSource(url);
+      });
 
-      if (progress < 1) {
-        animationRef.current = requestAnimationFrame(animate);
-      }
+      hls.on(HlsClass.Events.MANIFEST_PARSED, () => {
+        logger.debug("HlsRendererFullscreen", "HLS manifest parsed");
+        setIsLoading(false);
+        if (!isPaused) {
+          video.play().catch((err) => {
+            logger.warn("HlsRendererFullscreen", "Auto-play failed", err);
+          });
+        }
+      });
+
+      hls.on(HlsClass.Events.ERROR, (_, data) => {
+        if (data.fatal) {
+          logger.error("HlsRendererFullscreen", "HLS fatal error", data);
+          switch (data.type) {
+            case HlsClass.ErrorTypes.NETWORK_ERROR:
+              if (retryCount < maxRetries) {
+                setRetryCount((prev) => prev + 1);
+                hls.startLoad();
+              } else {
+                setError("ネットワークエラー: ストリームに接続できません");
+              }
+              break;
+            case HlsClass.ErrorTypes.MEDIA_ERROR:
+              hls.recoverMediaError();
+              break;
+            default:
+              setError("ストリームの再生に失敗しました");
+              break;
+          }
+        }
+      });
+
+      hls.attachMedia(video);
     };
 
-    animationRef.current = requestAnimationFrame(animate);
+    initHls();
 
     return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
+      mounted = false;
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
       }
     };
-  }, [textContent, width, height, isPaused]);
+  }, [url, retryCount, isPaused]);
 
-  const textStyle: CSSProperties = {
-    fontFamily: textContent.fontFamily,
-    fontSize: `${textContent.fontSize}px`,
-    color: textContent.color,
-    backgroundColor: textContent.backgroundColor,
-    textAlign: textContent.textAlign,
-    writingMode: textContent.writingMode === "vertical" ? "vertical-rl" : ("horizontal-tb" as const),
-    whiteSpace: textContent.scrollType !== "none" ? "nowrap" : "pre-wrap",
-    padding: "16px",
-    width: textContent.scrollType === "horizontal" ? "max-content" : "100%",
-    height: textContent.scrollType === "vertical" ? "max-content" : "100%",
-    minHeight: "100%",
-    display: "flex",
-    alignItems: textContent.scrollType === "none" ? "center" : "flex-start",
-    justifyContent:
-      textContent.textAlign === "center" ? "center" : textContent.textAlign === "end" ? "flex-end" : "flex-start",
-  };
+  // 再生/一時停止制御
+  useEffect(() => {
+    if (!videoRef.current) return;
+    const video = videoRef.current;
+
+    if (isPaused) {
+      video.pause();
+    } else {
+      video.play().catch(() => {});
+    }
+  }, [isPaused]);
+
+  // ミュート制御
+  useEffect(() => {
+    if (!videoRef.current) return;
+    videoRef.current.muted = isMuted;
+  }, [isMuted]);
+
+  // エラー時にフォールバック画像を表示
+  if (error && fallbackImagePath) {
+    const fallbackUrl = apiClient.getFileUrl(fallbackImagePath);
+    return <img src={fallbackUrl} alt="Fallback" style={{ width: "100%", height: "100%", objectFit: "contain" }} />;
+  }
+
+  if (error) {
+    return (
+      <Box
+        style={{
+          width,
+          height,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: "#111",
+        }}
+      >
+        <Text c="red">{error}</Text>
+      </Box>
+    );
+  }
 
   return (
-    <Box
-      ref={containerRef}
-      style={{
-        width,
-        height,
-        overflow: textContent.scrollType !== "none" ? "hidden" : "auto",
-        backgroundColor: textContent.backgroundColor,
-      }}
-    >
-      <Box style={textStyle}>{textContent.content}</Box>
+    <Box style={{ width, height, position: "relative" }}>
+      {isLoading && (
+        <Box
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: "#111",
+          }}
+        >
+          <Text c="white">ストリームを読み込み中...</Text>
+        </Box>
+      )}
+      <video
+        ref={videoRef}
+        style={{ width: "100%", height: "100%", objectFit: "contain" }}
+        autoPlay={!isPaused}
+        muted={isMuted}
+        playsInline
+      />
     </Box>
   );
 }

@@ -6,7 +6,9 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { v4 as uuidv4 } from "uuid";
 import { eq } from "drizzle-orm";
-import { db, contents, layouts, playlists, schedules } from "./db/index.js";
+import ffmpeg from "fluent-ffmpeg";
+import { db, contents, layouts, playlists, schedules, streams } from "./db/index.js";
+import crypto from "node:crypto";
 
 dotenv.config();
 
@@ -46,9 +48,37 @@ const upload = multer({
   },
 });
 
+// 動画からサムネイルを生成
+async function generateVideoThumbnail(videoPath: string, thumbnailPath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    ffmpeg(videoPath)
+      .on("error", (err) => {
+        console.error("Thumbnail generation error:", err);
+        reject(err);
+      })
+      .on("end", () => {
+        console.log("Thumbnail generated:", thumbnailPath);
+        resolve();
+      })
+      .screenshots({
+        count: 1,
+        folder: path.dirname(thumbnailPath),
+        filename: path.basename(thumbnailPath),
+        size: "320x180",
+        timemarks: ["1"], // 1秒目のフレームを取得
+      });
+  });
+}
+
+// MIMEタイプが動画かどうかを判定
+function isVideoMimeType(mimeType: string): boolean {
+  return mimeType.startsWith("video/");
+}
+
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true })); // nginx-rtmpコールバック用
 
 // 静的ファイル配信
 app.use("/uploads", express.static(UPLOAD_DIR));
@@ -75,13 +105,32 @@ app.post("/api/files/upload", upload.single("file"), async (req: Request, res: R
       return;
     }
 
+    const fileId = path.basename(req.file.filename, path.extname(req.file.filename));
+    let thumbnailPath: string | undefined;
+
+    // 動画の場合はサムネイルを生成
+    if (isVideoMimeType(req.file.mimetype)) {
+      const videoPath = path.join(UPLOAD_DIR, "files", req.file.filename);
+      const thumbnailFilename = `${fileId}.jpg`;
+      const thumbnailFullPath = path.join(UPLOAD_DIR, "thumbnails", thumbnailFilename);
+
+      try {
+        await generateVideoThumbnail(videoPath, thumbnailFullPath);
+        thumbnailPath = `/uploads/thumbnails/${thumbnailFilename}`;
+      } catch (error) {
+        console.error("Failed to generate thumbnail:", error);
+        // サムネイル生成に失敗してもアップロード自体は成功とする
+      }
+    }
+
     const fileInfo = {
-      id: path.basename(req.file.filename, path.extname(req.file.filename)),
+      id: fileId,
       originalName: req.file.originalname,
       filename: req.file.filename,
       mimeType: req.file.mimetype,
       size: req.file.size,
       path: `/uploads/files/${req.file.filename}`,
+      thumbnailPath,
     };
 
     res.json(fileInfo);
@@ -174,6 +223,9 @@ app.get("/api/contents", async (_req: Request, res: Response, next: NextFunction
       type: content.type,
       size: content.fileSize,
       url: content.urlInfo ? (content.urlInfo as { url?: string }).url : undefined,
+      // ファイルパス情報を追加
+      filePath: content.fileStoragePath || null,
+      thumbnailPath: content.fileThumbnailPath || null,
       tags: content.tags,
       createdAt: content.createdAt.toISOString(),
       updatedAt: content.updatedAt.toISOString(),
@@ -205,6 +257,9 @@ app.get("/api/contents/:id", async (req: Request, res: Response, next: NextFunct
     const c = content[0];
 
     // フロントエンド用の形式に変換
+    // HLSコンテンツの場合、urlInfoをhlsInfoとして返す
+    const hlsInfo = c.type === "hls" && c.urlInfo ? c.urlInfo : undefined;
+
     const responseData = {
       id: c.id,
       name: c.name,
@@ -221,6 +276,7 @@ app.get("/api/contents/:id", async (req: Request, res: Response, next: NextFunct
           }
         : undefined,
       urlInfo: c.urlInfo,
+      hlsInfo, // HLSコンテンツ用
       textInfo: c.textInfo,
       weatherInfo: c.weatherInfo,
       csvInfo: c.csvInfo,
@@ -282,6 +338,9 @@ app.put("/api/contents/:id", async (req: Request, res: Response, next: NextFunct
 app.delete("/api/contents/:id", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const id = req.params.id as string;
+    // 関連するストリームを先に削除（外部キー制約対応）
+    await db.delete(streams).where(eq(streams.contentId, id));
+    // コンテンツを削除
     await db.delete(contents).where(eq(contents.id, id));
     res.json({ success: true });
   } catch (error) {
@@ -781,6 +840,290 @@ app.delete("/api/csv/:contentId", async (req: Request, res: Response, next: Next
     }
     res.json({ success: true });
   } catch (error) {
+    next(error);
+  }
+});
+
+// ========================================
+// ストリームAPI (ライブ配信管理)
+// ========================================
+
+// ストリームキー生成関数
+function generateStreamKey(): string {
+  return crypto.randomBytes(16).toString("hex");
+}
+
+// HLS URL生成
+const HLS_BASE_URL = process.env.HLS_BASE_URL || "http://localhost:8080/hls";
+const RTMP_URL = process.env.RTMP_URL || "rtmp://localhost:1935/live";
+
+// ストリーム一覧取得
+app.get("/api/streams", async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const allStreams = await db.select().from(streams).orderBy(streams.createdAt);
+
+    const responseData = allStreams.map((stream) => ({
+      id: stream.id,
+      name: stream.name,
+      streamKey: stream.streamKey,
+      contentId: stream.contentId,
+      status: stream.status,
+      lastLiveAt: stream.lastLiveAt?.toISOString() || null,
+      description: stream.description,
+      rtmpUrl: RTMP_URL,
+      hlsUrl: `${HLS_BASE_URL}/${stream.streamKey}.m3u8`,
+      createdAt: stream.createdAt.toISOString(),
+      updatedAt: stream.updatedAt.toISOString(),
+    }));
+
+    res.json(responseData);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ストリーム作成（HLSコンテンツも自動作成）
+app.post("/api/streams", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { name, description } = req.body;
+
+    if (!name) {
+      res.status(400).json({ error: "Name is required" });
+      return;
+    }
+
+    const streamKey = generateStreamKey();
+    const hlsUrl = `${HLS_BASE_URL}/${streamKey}.m3u8`;
+
+    // HLSコンテンツを先に作成
+    const contentId = uuidv4();
+    await db.insert(contents).values({
+      id: contentId,
+      name: `${name} (ライブ配信)`,
+      type: "hls",
+      tags: ["ライブ配信"],
+      urlInfo: {
+        url: hlsUrl,
+        title: name,
+        description: description || "",
+        isLive: true,
+      },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    // ストリームを作成
+    const streamId = uuidv4();
+    await db.insert(streams).values({
+      id: streamId,
+      name,
+      streamKey,
+      contentId,
+      status: "offline",
+      description,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    res.json({
+      id: streamId,
+      name,
+      streamKey,
+      contentId,
+      status: "offline",
+      description,
+      rtmpUrl: RTMP_URL,
+      hlsUrl,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ストリーム詳細取得
+app.get("/api/streams/:id", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const id = req.params.id as string;
+    const stream = await db.select().from(streams).where(eq(streams.id, id)).limit(1);
+
+    if (stream.length === 0) {
+      res.status(404).json({ error: "Stream not found" });
+      return;
+    }
+
+    const s = stream[0];
+    res.json({
+      id: s.id,
+      name: s.name,
+      streamKey: s.streamKey,
+      contentId: s.contentId,
+      status: s.status,
+      lastLiveAt: s.lastLiveAt?.toISOString() || null,
+      description: s.description,
+      fallbackImagePath: s.fallbackImagePath,
+      rtmpUrl: RTMP_URL,
+      hlsUrl: `${HLS_BASE_URL}/${s.streamKey}.m3u8`,
+      createdAt: s.createdAt.toISOString(),
+      updatedAt: s.updatedAt.toISOString(),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ストリームキー再生成
+app.post("/api/streams/:id/regenerate-key", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const id = req.params.id as string;
+    const stream = await db.select().from(streams).where(eq(streams.id, id)).limit(1);
+
+    if (stream.length === 0) {
+      res.status(404).json({ error: "Stream not found" });
+      return;
+    }
+
+    const newStreamKey = generateStreamKey();
+    const newHlsUrl = `${HLS_BASE_URL}/${newStreamKey}.m3u8`;
+
+    // ストリームキーを更新
+    await db.update(streams).set({
+      streamKey: newStreamKey,
+      updatedAt: new Date(),
+    }).where(eq(streams.id, id));
+
+    // 関連するコンテンツのHLS URLも更新
+    const s = stream[0];
+    if (s.contentId) {
+      await db.update(contents).set({
+        urlInfo: {
+          url: newHlsUrl,
+          isLive: true,
+        },
+        updatedAt: new Date(),
+      }).where(eq(contents.id, s.contentId));
+    }
+
+    res.json({
+      streamKey: newStreamKey,
+      hlsUrl: newHlsUrl,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ストリーム削除
+app.delete("/api/streams/:id", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const id = req.params.id as string;
+    const stream = await db.select().from(streams).where(eq(streams.id, id)).limit(1);
+
+    if (stream.length === 0) {
+      res.status(404).json({ error: "Stream not found" });
+      return;
+    }
+
+    // 関連するコンテンツも削除
+    const s = stream[0];
+    if (s.contentId) {
+      await db.delete(contents).where(eq(contents.id, s.contentId));
+    }
+
+    // ストリームを削除
+    await db.delete(streams).where(eq(streams.id, id));
+
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ストリーム状態取得
+app.get("/api/streams/:id/status", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const id = req.params.id as string;
+    const stream = await db.select().from(streams).where(eq(streams.id, id)).limit(1);
+
+    if (stream.length === 0) {
+      res.status(404).json({ error: "Stream not found" });
+      return;
+    }
+
+    res.json({
+      status: stream[0].status,
+      lastLiveAt: stream[0].lastLiveAt?.toISOString() || null,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// nginx-rtmpコールバック: 配信開始
+app.post("/api/streams/on-publish", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    // nginx-rtmpからのコールバック（application/x-www-form-urlencoded）
+    const streamKey = req.body.name as string;
+
+    if (!streamKey) {
+      res.status(400).send("Invalid stream key");
+      return;
+    }
+
+    // ストリームキーでストリームを検索
+    const stream = await db.select().from(streams).where(eq(streams.streamKey, streamKey)).limit(1);
+
+    if (stream.length === 0) {
+      // 未登録のストリームキーは拒否
+      console.log(`Rejected unknown stream key: ${streamKey}`);
+      res.status(403).send("Forbidden");
+      return;
+    }
+
+    // ステータスをliveに更新
+    await db.update(streams).set({
+      status: "live",
+      lastLiveAt: new Date(),
+      updatedAt: new Date(),
+    }).where(eq(streams.streamKey, streamKey));
+
+    console.log(`Stream started: ${stream[0].name} (${streamKey})`);
+    res.status(200).send("OK");
+  } catch (error) {
+    console.error("on-publish error:", error);
+    next(error);
+  }
+});
+
+// nginx-rtmpコールバック: 配信終了
+app.post("/api/streams/on-publish-done", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const streamKey = req.body.name as string;
+
+    if (!streamKey) {
+      res.status(400).send("Invalid stream key");
+      return;
+    }
+
+    // ストリームキーでストリームを検索
+    const stream = await db.select().from(streams).where(eq(streams.streamKey, streamKey)).limit(1);
+
+    if (stream.length === 0) {
+      res.status(200).send("OK");
+      return;
+    }
+
+    // ステータスをofflineに更新
+    await db.update(streams).set({
+      status: "offline",
+      updatedAt: new Date(),
+    }).where(eq(streams.streamKey, streamKey));
+
+    console.log(`Stream ended: ${stream[0].name} (${streamKey})`);
+    res.status(200).send("OK");
+  } catch (error) {
+    console.error("on-publish-done error:", error);
     next(error);
   }
 });

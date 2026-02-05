@@ -1,5 +1,6 @@
 .DS_Store
 node_modules/
+dist/
 
 # Environment files
 .env
@@ -23,5 +24,8 @@ test-content/
 .pnpm-store
 
 uploads/
+
+# Database data
+data/
 
 .playwright-mcp

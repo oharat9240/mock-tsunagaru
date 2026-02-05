@@ -131,13 +131,6 @@ export const ContentGridView = memo(
     const handleContentClick = (content: ContentIndex) => {
       if (onContentClick) {
         onContentClick(content);
-      } else {
-        // デフォルトの動作: URLの場合は新しいタブで開く
-        if (content.type === "youtube" || content.type === "url") {
-          if (content.url) {
-            window.open(content.url, "_blank", "noopener,noreferrer");
-          }
-        }
       }
     };
 

@@ -58,12 +58,14 @@ export const ContentUsageDisplay = ({ contentId }: ContentUsageDisplayProps) => 
               let regionName = `リージョン ${assignment.regionId}`;
 
               try {
-                const layout = await getLayoutById(playlist.layoutId);
-                if (layout) {
-                  const region = layout.regions.find((r) => r.id === assignment.regionId);
-                  if (region) {
-                    const regionIndex = layout.regions.findIndex((r) => r.id === assignment.regionId) + 1;
-                    regionName = `リージョン ${regionIndex}`;
+                if (playlist.layoutId) {
+                  const layout = await getLayoutById(playlist.layoutId);
+                  if (layout) {
+                    const region = layout.regions.find((r) => r.id === assignment.regionId);
+                    if (region) {
+                      const regionIndex = layout.regions.findIndex((r) => r.id === assignment.regionId) + 1;
+                      regionName = `リージョン ${regionIndex}`;
+                    }
                   }
                 }
               } catch (layoutError) {
@@ -82,7 +84,9 @@ export const ContentUsageDisplay = ({ contentId }: ContentUsageDisplayProps) => 
           if (regionUsage.length > 0) {
             let layout: LayoutItem | null = null;
             try {
-              layout = await getLayoutById(playlist.layoutId);
+              if (playlist.layoutId) {
+                layout = await getLayoutById(playlist.layoutId);
+              }
             } catch (layoutError) {
               logger.warn("ContentUsageDisplay", "Failed to load layout", layoutError);
             }
@@ -188,7 +192,7 @@ export const ContentUsageDisplay = ({ contentId }: ContentUsageDisplayProps) => 
                     {usage.playlist.name}
                   </Text>
                   <Text size="xs" c="dimmed">
-                    デバイス: {usage.playlist.device}
+                    デバイス: {usage.playlist.device || "-"}
                   </Text>
                 </Box>
               </Group>

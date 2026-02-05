@@ -147,7 +147,7 @@ export const ContentTableView = ({
             </Table.Td>
             <Table.Td>{getContentTypeBadge(content.type)}</Table.Td>
             <Table.Td>
-              <Text size="sm">{formatFileSize(content.size)}</Text>
+              <Text size="sm">{formatFileSize(content.size ?? undefined)}</Text>
             </Table.Td>
             <Table.Td>
               <Group gap={4}>

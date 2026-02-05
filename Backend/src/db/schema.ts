@@ -1,9 +1,10 @@
 import { pgTable, uuid, text, timestamp, integer, boolean, jsonb, pgEnum } from "drizzle-orm/pg-core";
 
 // Enums
-export const contentTypeEnum = pgEnum("content_type", ["video", "image", "text", "youtube", "url", "weather", "csv"]);
+export const contentTypeEnum = pgEnum("content_type", ["video", "image", "text", "youtube", "url", "weather", "csv", "hls"]);
 export const orientationEnum = pgEnum("orientation", ["landscape", "portrait-right", "portrait-left"]);
 export const eventTypeEnum = pgEnum("event_type", ["playlist", "power_off", "power_on"]);
+export const streamStatusEnum = pgEnum("stream_status", ["offline", "live", "error"]);
 export const weekdayEnum = pgEnum("weekday", [
   "monday",
   "tuesday",
@@ -82,6 +83,21 @@ export const schedules = pgTable("schedules", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+// Streams table (ライブ配信管理)
+export const streams = pgTable("streams", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  streamKey: text("stream_key").notNull().unique(),
+  contentId: uuid("content_id").references(() => contents.id), // 関連するHLSコンテンツ
+  status: streamStatusEnum("status").notNull().default("offline"),
+  lastLiveAt: timestamp("last_live_at"),
+  description: text("description"),
+  fallbackImagePath: text("fallback_image_path"),
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 // Type exports
 export type Content = typeof contents.$inferSelect;
 export type NewContent = typeof contents.$inferInsert;
@@ -91,3 +107,5 @@ export type Playlist = typeof playlists.$inferSelect;
 export type NewPlaylist = typeof playlists.$inferInsert;
 export type Schedule = typeof schedules.$inferSelect;
 export type NewSchedule = typeof schedules.$inferInsert;
+export type Stream = typeof streams.$inferSelect;
+export type NewStream = typeof streams.$inferInsert;

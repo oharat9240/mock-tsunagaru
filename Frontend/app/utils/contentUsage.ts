@@ -7,7 +7,7 @@ export interface ContentUsageInfo {
   playlists: Array<{
     id: string;
     name: string;
-    device: string;
+    device: string | null;
     regionCount: number;
   }>;
 }
@@ -25,7 +25,7 @@ export const checkContentUsage = async (
     const usedInPlaylists: Array<{
       id: string;
       name: string;
-      device: string;
+      device: string | null;
       regionCount: number;
     }> = [];
     let totalUsageCount = 0;

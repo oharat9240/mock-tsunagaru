@@ -21,6 +21,8 @@ import {
  * - レイアウトに基づいた複数リージョンの同時再生
  * - 各リージョン内のコンテンツ順次再生
  * - ループ再生対応
+ * - プリロード機能
+ * - 厳密な時間管理（秒単位精度）
  */
 export class PlaybackEngine {
   private config: EngineConfig;
@@ -29,6 +31,8 @@ export class PlaybackEngine {
   private listeners: Set<EngineEventListener> = new Set();
   private animationFrameId: number | null = null;
   private contentLoader: ContentLoader;
+  private lastTimeUpdateSecond = -1; // 最後に時間更新イベントを発行した秒数
+  private preloadedRegions: Set<string> = new Set(); // プリロード済みリージョン
 
   constructor(contentLoader: ContentLoader, config: Partial<EngineConfig> = {}) {
     this.config = { ...DEFAULT_ENGINE_CONFIG, ...config };
@@ -69,6 +73,7 @@ export class PlaybackEngine {
       this.state.layout = layout;
       this.state.regions = new Map();
       this.state.cycleCount = 0;
+      this.preloadedRegions.clear();
 
       // 各リージョンの状態を初期化
       for (const region of layout.regions) {
@@ -139,6 +144,7 @@ export class PlaybackEngine {
 
     this.timing.start();
     this.setStatus("playing");
+    this.lastTimeUpdateSecond = -1;
     this.startLoop();
     logger.info("PlaybackEngine", "Playback started");
   }
@@ -162,6 +168,8 @@ export class PlaybackEngine {
     this.timing.reset();
     this.state.currentTime = 0;
     this.state.cycleCount = 0;
+    this.lastTimeUpdateSecond = -1;
+    this.preloadedRegions.clear();
 
     // 各リージョンをリセット
     for (const regionState of this.state.regions.values()) {
@@ -194,6 +202,19 @@ export class PlaybackEngine {
         endTime: currentTime + duration,
       };
       regionState.currentIndex = 0;
+      regionState.isPreloaded = false;
+
+      // 次のコンテンツをプリセット
+      if (regionState.contents.length > 1) {
+        const nextContent = regionState.contents[1];
+        const nextDuration = this.getContentDuration(nextContent, regionState);
+        regionState.nextContent = {
+          content: nextContent,
+          startTime: regionState.currentContent.endTime,
+          duration: nextDuration,
+          endTime: regionState.currentContent.endTime + nextDuration,
+        };
+      }
 
       this.emit({
         type: "contentChange",
@@ -213,6 +234,13 @@ export class PlaybackEngine {
 
       const currentTime = this.timing.getCurrentTime();
       this.state.currentTime = currentTime;
+
+      // 秒単位の時間更新イベント（精度の担保）
+      const currentSecond = Math.floor(currentTime);
+      if (currentSecond !== this.lastTimeUpdateSecond) {
+        this.lastTimeUpdateSecond = currentSecond;
+        this.emit({ type: "timeUpdate", currentTime: currentSecond });
+      }
 
       // 各リージョンの更新
       this.updateRegions(currentTime);
@@ -242,8 +270,14 @@ export class PlaybackEngine {
     for (const regionState of this.state.regions.values()) {
       if (!regionState.currentContent) continue;
 
-      // コンテンツ終了チェック
-      if (currentTime >= regionState.currentContent.endTime) {
+      // プリロードチェック（次コンテンツがある場合）
+      this.checkPreload(regionState, currentTime);
+
+      // コンテンツ終了チェック（秒単位の精度で判定）
+      const endTimeFloor = Math.floor(regionState.currentContent.endTime);
+      const currentTimeFloor = Math.floor(currentTime);
+
+      if (currentTimeFloor >= endTimeFloor) {
         this.advanceToNextContent(regionState, currentTime);
       }
 
@@ -267,6 +301,35 @@ export class PlaybackEngine {
   }
 
   /**
+   * プリロードチェック - 次のコンテンツを事前にロード通知
+   */
+  private checkPreload(regionState: RegionPlaybackState, currentTime: number): void {
+    if (!regionState.currentContent || regionState.isPreloaded) return;
+
+    const nextIndex = regionState.currentIndex + 1;
+    if (nextIndex >= regionState.contents.length) return;
+
+    const timeUntilEnd = regionState.currentContent.endTime - currentTime;
+    const preloadKey = `${regionState.regionId}-${nextIndex}`;
+
+    // プリロード開始時間になったらイベント発行
+    if (timeUntilEnd <= this.config.preloadLeadTime && !this.preloadedRegions.has(preloadKey)) {
+      const nextContent = regionState.contents[nextIndex];
+      this.preloadedRegions.add(preloadKey);
+      regionState.isPreloaded = true;
+
+      this.emit({
+        type: "preload",
+        regionId: regionState.regionId,
+        content: nextContent,
+        startsIn: Math.max(0, timeUntilEnd),
+      });
+
+      logger.debug("PlaybackEngine", `Preloading content ${nextIndex + 1} for region ${regionState.regionId}`);
+    }
+  }
+
+  /**
    * 次のコンテンツに進む
    */
   private advanceToNextContent(regionState: RegionPlaybackState, currentTime: number): void {
@@ -276,19 +339,39 @@ export class PlaybackEngine {
       // このリージョンのコンテンツが全て終了
       // ループの場合は startNewCycle で処理される
       regionState.currentContent = null;
+      regionState.nextContent = null;
       return;
     }
 
     const content = regionState.contents[nextIndex];
     const duration = this.getContentDuration(content, regionState);
 
+    // 厳密な時間管理: 前のコンテンツの終了時刻を開始時刻として使用
+    const startTime = regionState.currentContent?.endTime ?? currentTime;
+
     regionState.currentIndex = nextIndex;
     regionState.currentContent = {
       content,
-      startTime: currentTime,
+      startTime,
       duration,
-      endTime: currentTime + duration,
+      endTime: startTime + duration,
     };
+    regionState.isPreloaded = false;
+
+    // 次の次のコンテンツをプリセット
+    const nextNextIndex = nextIndex + 1;
+    if (nextNextIndex < regionState.contents.length) {
+      const nextNextContent = regionState.contents[nextNextIndex];
+      const nextNextDuration = this.getContentDuration(nextNextContent, regionState);
+      regionState.nextContent = {
+        content: nextNextContent,
+        startTime: regionState.currentContent.endTime,
+        duration: nextNextDuration,
+        endTime: regionState.currentContent.endTime + nextNextDuration,
+      };
+    } else {
+      regionState.nextContent = null;
+    }
 
     this.emit({
       type: "contentChange",
@@ -299,7 +382,7 @@ export class PlaybackEngine {
 
     logger.debug(
       "PlaybackEngine",
-      `Region ${regionState.regionId} advanced to content ${nextIndex + 1}/${regionState.contents.length}`,
+      `Region ${regionState.regionId} advanced to content ${nextIndex + 1}/${regionState.contents.length} at ${startTime.toFixed(2)}s`,
     );
   }
 
@@ -309,6 +392,7 @@ export class PlaybackEngine {
   private startNewCycle(): void {
     this.state.cycleCount++;
     const currentTime = this.timing.getCurrentTime();
+    this.preloadedRegions.clear();
 
     for (const regionState of this.state.regions.values()) {
       if (regionState.contents.length === 0) continue;
@@ -323,6 +407,21 @@ export class PlaybackEngine {
         duration,
         endTime: currentTime + duration,
       };
+      regionState.isPreloaded = false;
+
+      // 次のコンテンツをプリセット
+      if (regionState.contents.length > 1) {
+        const nextContent = regionState.contents[1];
+        const nextDuration = this.getContentDuration(nextContent, regionState);
+        regionState.nextContent = {
+          content: nextContent,
+          startTime: regionState.currentContent.endTime,
+          duration: nextDuration,
+          endTime: regionState.currentContent.endTime + nextDuration,
+        };
+      } else {
+        regionState.nextContent = null;
+      }
 
       this.emit({
         type: "contentChange",
@@ -352,11 +451,7 @@ export class PlaybackEngine {
       return content.fileInfo.metadata.duration;
     }
 
-    // YouTube の場合は長めにデフォルト設定（実際の尺が不明なため）
-    if (content.type === "youtube") {
-      return 60;
-    }
-
+    // 静止画・HLSはデフォルト再生時間を使用
     return this.config.defaultDuration;
   }
 
@@ -413,6 +508,7 @@ export class PlaybackEngine {
     this.stopLoop();
     this.timing.dispose();
     this.listeners.clear();
+    this.preloadedRegions.clear();
     this.state = this.createInitialState();
     logger.info("PlaybackEngine", "Disposed");
   }

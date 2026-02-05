@@ -1,17 +1,5 @@
 import { Button, Group, SegmentedControl, Text, TextInput } from "@mantine/core";
-import {
-  IconBrandYoutube,
-  IconCloud,
-  IconFile,
-  IconFileSpreadsheet,
-  IconFileText,
-  IconLink,
-  IconPhoto,
-  IconSearch,
-  IconTrash,
-  IconVideo,
-  IconX,
-} from "@tabler/icons-react";
+import { IconBroadcast, IconFile, IconPhoto, IconSearch, IconTrash, IconVideo, IconX } from "@tabler/icons-react";
 import { useAtom } from "jotai";
 import { memo } from "react";
 import { contentSearchQueryAtom, contentTypeFilterAtom } from "~/states/content";
@@ -29,16 +17,8 @@ export const ContentFilters = memo(() => {
         return <IconVideo size={14} />;
       case "image":
         return <IconPhoto size={14} />;
-      case "text":
-        return <IconFileText size={14} />;
-      case "youtube":
-        return <IconBrandYoutube size={14} />;
-      case "url":
-        return <IconLink size={14} />;
-      case "weather":
-        return <IconCloud size={14} />;
-      case "csv":
-        return <IconFileSpreadsheet size={14} />;
+      case "hls":
+        return <IconBroadcast size={14} />;
       case "unused":
         return <IconTrash size={14} />;
       default:
@@ -54,16 +34,8 @@ export const ContentFilters = memo(() => {
         return "動画";
       case "image":
         return "画像";
-      case "text":
-        return "テキスト";
-      case "youtube":
-        return "YouTube";
-      case "url":
-        return "URL";
-      case "weather":
-        return "気象情報";
-      case "csv":
-        return "CSV";
+      case "hls":
+        return "HLS";
       case "unused":
         return "未使用";
       default:
@@ -87,11 +59,7 @@ export const ContentFilters = memo(() => {
     getFilterOption("all"),
     getFilterOption("video"),
     getFilterOption("image"),
-    getFilterOption("text"),
-    getFilterOption("youtube"),
-    getFilterOption("url"),
-    getFilterOption("weather"),
-    getFilterOption("csv"),
+    getFilterOption("hls"),
     getFilterOption("unused"),
   ];
 
@@ -128,7 +96,7 @@ export const ContentFilters = memo(() => {
         data={filterOptions}
         size="sm"
         aria-label="コンテンツタイプフィルター"
-        miw="520px"
+        miw="400px"
         fullWidth={false}
         styles={{
           label: { padding: "2px 0px" },

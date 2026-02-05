@@ -9,12 +9,10 @@ export type PlaybackStatus = "idle" | "loading" | "playing" | "paused" | "error"
 export interface EngineConfig {
   /** ループ再生 */
   loop: boolean;
-  /** プリロードするコンテンツ数 */
-  preloadCount: number;
-  /** デフォルト再生時間（秒） */
+  /** デフォルト再生時間（秒）- 静止画・HLS用 */
   defaultDuration: number;
-  /** YouTube用バッファ時間（秒） */
-  youtubeBufferTime: number;
+  /** プリロード開始までの時間（秒） */
+  preloadLeadTime: number;
 }
 
 // 再生中のコンテンツ情報
@@ -53,7 +51,9 @@ export type EngineEvent =
   | { type: "statusChange"; status: PlaybackStatus }
   | { type: "contentChange"; regionId: string; content: ContentItem; index: number }
   | { type: "cycleComplete"; cycleCount: number }
-  | { type: "error"; error: string };
+  | { type: "error"; error: string }
+  | { type: "preload"; regionId: string; content: ContentItem; startsIn: number }
+  | { type: "timeUpdate"; currentTime: number };
 
 export type EngineEventListener = (event: EngineEvent) => void;
 
@@ -63,7 +63,6 @@ export type ContentLoader = (id: string) => Promise<ContentItem | null>;
 // デフォルト設定
 export const DEFAULT_ENGINE_CONFIG: EngineConfig = {
   loop: true,
-  preloadCount: 1,
   defaultDuration: 10,
-  youtubeBufferTime: 2,
+  preloadLeadTime: 3,
 };

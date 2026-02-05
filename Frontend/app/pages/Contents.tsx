@@ -31,13 +31,7 @@ import {
   filteredContentsAtom,
 } from "~/states/content";
 import { contentPreviewModalAtom, modalActionsAtom } from "~/states/modal";
-import {
-  type ContentType,
-  type CsvContent,
-  CsvContentSchema,
-  type TextContent,
-  type WeatherContent,
-} from "~/types/content";
+import type { ContentType, HlsContent } from "~/types/content";
 import { formatFileSize, getContentTypeBadge } from "~/utils/contentTypeUtils";
 import { logger } from "~/utils/logger";
 
@@ -60,7 +54,6 @@ export default function ContentsPage() {
     deleteContentForced,
     checkContentUsageStatus,
     updateContent,
-    getContentById,
     downloadContent,
   } = useContent();
 
@@ -201,16 +194,8 @@ export default function ContentsPage() {
   };
 
   const handleContentClick = (contentId: string, contentType: ContentType) => {
-    // 動画、画像、YouTube、URL、テキスト、気象情報、CSVでプレビューモーダルを開く
-    if (
-      contentType === "video" ||
-      contentType === "image" ||
-      contentType === "youtube" ||
-      contentType === "url" ||
-      contentType === "text" ||
-      contentType === "weather" ||
-      contentType === "csv"
-    ) {
+    // 動画、画像、HLSでプレビューモーダルを開く
+    if (contentType === "video" || contentType === "image" || contentType === "hls") {
       modalDispatch({ type: "OPEN_CONTENT_PREVIEW", contentId });
     }
   };
@@ -228,17 +213,7 @@ export default function ContentsPage() {
     contentModalDispatch({ type: "CLOSE_CONTENT_ADD" });
   };
 
-  const handleContentEditSubmit = async (data: {
-    id: string;
-    name: string;
-    tags: string[];
-    textInfo?: TextContent;
-    urlInfo?: { title?: string; description?: string };
-    weatherInfo?: WeatherContent;
-    csvInfo?: Partial<CsvContent> & { regenerateImage?: boolean };
-    csvBackgroundFile?: File | null;
-    csvFile?: File | null;
-  }) => {
+  const handleContentEditSubmit = async (data: { id: string; name: string; tags: string[]; hlsInfo?: HlsContent }) => {
     try {
       // 更新データを構築
       const updateData: Parameters<typeof updateContent>[1] = {
@@ -247,44 +222,9 @@ export default function ContentsPage() {
         updatedAt: new Date().toISOString(),
       };
 
-      // コンテンツタイプに応じて追加情報を設定
-      if (data.textInfo) {
-        updateData.textInfo = data.textInfo;
-      }
-      if (data.urlInfo) {
-        // 既存のurlInfo取得のためコンテンツを再取得
-        const existingContent = await getContentById(data.id);
-        if (existingContent?.urlInfo) {
-          updateData.urlInfo = {
-            ...existingContent.urlInfo,
-            ...data.urlInfo,
-          };
-        }
-      }
-      if (data.weatherInfo) {
-        updateData.weatherInfo = data.weatherInfo;
-      }
-      if (data.csvInfo) {
-        // 既存のCSV情報を取得して、更新データとマージ
-        const existingContent = await getContentById(data.id);
-        if (existingContent?.csvInfo) {
-          // 既存のcsvInfoと新しいデータをマージして完全なCsvContentを作成
-          const mergedCsvInfo = {
-            ...existingContent.csvInfo,
-            ...data.csvInfo,
-          };
-
-          // Zodでバリデーション
-          try {
-            updateData.csvInfo = CsvContentSchema.parse(mergedCsvInfo);
-          } catch (error) {
-            console.error("CSV content validation failed:", error);
-            throw new Error("CSVコンテンツの更新データが不正です");
-          }
-        }
-
-        updateData.csvBackgroundFile = data.csvBackgroundFile || undefined;
-        updateData.csvFile = data.csvFile || undefined;
+      // HLSコンテンツの場合
+      if (data.hlsInfo) {
+        updateData.hlsInfo = data.hlsInfo;
       }
 
       const updatedContent = await updateContent(data.id, updateData);
@@ -294,11 +234,11 @@ export default function ContentsPage() {
         id: updatedContent.id,
         name: updatedContent.name,
         type: updatedContent.type,
-        size: updatedContent.fileInfo?.size,
-        url: updatedContent.urlInfo?.url,
+        size: updatedContent.fileInfo?.size ?? null,
+        url: updatedContent.hlsInfo?.url ?? null,
         tags: updatedContent.tags,
         createdAt: updatedContent.createdAt,
-        updatedAt: updatedContent.updatedAt,
+        updatedAt: updatedContent.updatedAt ?? null,
       };
 
       contentDispatch({ type: "UPDATE_CONTENT", id: data.id, content: contentIndex });
@@ -318,6 +258,46 @@ export default function ContentsPage() {
   const handleContentEditModalClose = () => {
     contentModalDispatch({ type: "CLOSE_CONTENT_EDIT" });
   };
+
+  // ContentPreviewModal用のコールバック関数をメモ化
+  const handlePreviewModalClose = useCallback(() => {
+    modalDispatch({ type: "CLOSE_CONTENT_PREVIEW" });
+  }, [modalDispatch]);
+
+  const handlePreviewContentDeleted = useCallback(async () => {
+    try {
+      const contentsData = await getContentsIndex();
+      contentDispatch({ type: "SET_CONTENTS", contents: contentsData });
+      const unusedIds = await getUnusedContentIds(contentsData);
+      contentDispatch({ type: "SET_UNUSED_CONTENT_IDS", unusedIds });
+    } catch (error) {
+      contentDispatch({
+        type: "SET_ERROR",
+        error: error instanceof Error ? error.message : "不明なエラーが発生しました",
+      });
+    }
+  }, [getContentsIndex, getUnusedContentIds, contentDispatch]);
+
+  const handlePreviewContentUpdated = useCallback(async () => {
+    try {
+      const contentsData = await getContentsIndex();
+      contentDispatch({ type: "SET_CONTENTS", contents: contentsData });
+      const unusedIds = await getUnusedContentIds(contentsData);
+      contentDispatch({ type: "SET_UNUSED_CONTENT_IDS", unusedIds });
+    } catch (error) {
+      contentDispatch({
+        type: "SET_ERROR",
+        error: error instanceof Error ? error.message : "不明なエラーが発生しました",
+      });
+    }
+  }, [getContentsIndex, getUnusedContentIds, contentDispatch]);
+
+  const handlePreviewContentChange = useCallback(
+    (newContentId: string) => {
+      modalDispatch({ type: "OPEN_CONTENT_PREVIEW", contentId: newContentId });
+    },
+    [modalDispatch],
+  );
 
   return (
     <Box pos="relative">
@@ -382,14 +362,7 @@ export default function ContentsPage() {
               </Table.Tr>
             ) : (
               contents.map((content) => {
-                const isPreviewable =
-                  content.type === "video" ||
-                  content.type === "image" ||
-                  content.type === "youtube" ||
-                  content.type === "url" ||
-                  content.type === "text" ||
-                  content.type === "weather" ||
-                  content.type === "csv";
+                const isPreviewable = content.type === "video" || content.type === "image" || content.type === "hls";
                 return (
                   <Table.Tr
                     key={content.id}
@@ -519,48 +492,12 @@ export default function ContentsPage() {
 
       <ContentPreviewModal
         opened={contentPreviewModal.opened}
-        onClose={() => modalDispatch({ type: "CLOSE_CONTENT_PREVIEW" })}
+        onClose={handlePreviewModalClose}
         contentId={contentPreviewModal.contentId}
         allContents={contents}
-        onContentDeleted={() => {
-          // コンテンツ一覧と未使用状態を再読み込み
-          const loadContents = async () => {
-            try {
-              const contentsData = await getContentsIndex();
-              contentDispatch({ type: "SET_CONTENTS", contents: contentsData });
-              // 未使用状態も更新
-              const unusedIds = await getUnusedContentIds(contentsData);
-              contentDispatch({ type: "SET_UNUSED_CONTENT_IDS", unusedIds });
-            } catch (error) {
-              contentDispatch({
-                type: "SET_ERROR",
-                error: error instanceof Error ? error.message : "不明なエラーが発生しました",
-              });
-            }
-          };
-          loadContents();
-        }}
-        onContentUpdated={() => {
-          // コンテンツ一覧と未使用状態を再読み込み
-          const loadContents = async () => {
-            try {
-              const contentsData = await getContentsIndex();
-              contentDispatch({ type: "SET_CONTENTS", contents: contentsData });
-              // 未使用状態も更新
-              const unusedIds = await getUnusedContentIds(contentsData);
-              contentDispatch({ type: "SET_UNUSED_CONTENT_IDS", unusedIds });
-            } catch (error) {
-              contentDispatch({
-                type: "SET_ERROR",
-                error: error instanceof Error ? error.message : "不明なエラーが発生しました",
-              });
-            }
-          };
-          loadContents();
-        }}
-        onContentChange={(newContentId) => {
-          modalDispatch({ type: "OPEN_CONTENT_PREVIEW", contentId: newContentId });
-        }}
+        onContentDeleted={handlePreviewContentDeleted}
+        onContentUpdated={handlePreviewContentUpdated}
+        onContentChange={handlePreviewContentChange}
       />
 
       {contentEditModal.content && (

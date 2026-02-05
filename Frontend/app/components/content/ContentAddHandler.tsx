@@ -1,6 +1,8 @@
 import type { FileWithPath } from "@mantine/dropzone";
 import { useContent } from "~/hooks/useContent";
-import type { CsvContent, TextContent, WeatherContent } from "~/types/content";
+import { apiClient } from "~/services/apiClient";
+import type { HlsContent } from "~/types/content";
+import type { Stream } from "~/types/stream";
 import { ContentAddModal } from "../modals/ContentAddModal";
 
 interface ContentAddHandlerProps {
@@ -16,12 +18,11 @@ interface ContentAddHandlerProps {
  * コンテンツ管理ページとプレイリスト編集ページの両方で使用できるようにします。
  */
 export const ContentAddHandler = ({ opened, onClose, onContentAdded }: ContentAddHandlerProps) => {
-  const { createFileOrTextContent, createUrlContent, createTextContent, createWeatherContent, createCsvContent } =
-    useContent();
+  const { createFileContent, createHlsContent } = useContent();
 
   const handleFileSubmit = async (files: FileWithPath[], names?: string[]) => {
     for (let i = 0; i < files.length; i++) {
-      await createFileOrTextContent(files[i], names?.[i]);
+      await createFileContent(files[i], names?.[i]);
     }
     if (onContentAdded) {
       await onContentAdded();
@@ -29,41 +30,21 @@ export const ContentAddHandler = ({ opened, onClose, onContentAdded }: ContentAd
     onClose();
   };
 
-  const handleUrlSubmit = async (data: { url: string; name?: string; title?: string; description?: string }) => {
-    await createUrlContent(data.url, data.name, data.title, data.description);
+  const handleHlsSubmit = async (data: { name: string; hlsInfo: HlsContent }) => {
+    await createHlsContent(data.name, data.hlsInfo);
     if (onContentAdded) {
       await onContentAdded();
     }
     onClose();
   };
 
-  const handleTextSubmit = async (data: { name: string; textInfo: TextContent }) => {
-    await createTextContent(data.name, data.textInfo);
+  const handleLiveStreamSubmit = async (data: { name: string; description?: string }): Promise<Stream> => {
+    const stream = await apiClient.createStream<Stream>(data);
     if (onContentAdded) {
       await onContentAdded();
     }
-    onClose();
-  };
-
-  const handleWeatherSubmit = async (data: { name: string; weatherInfo: WeatherContent }) => {
-    await createWeatherContent(data.name, data.weatherInfo);
-    if (onContentAdded) {
-      await onContentAdded();
-    }
-    onClose();
-  };
-
-  const handleCsvSubmit = async (data: {
-    name: string;
-    csvData: Partial<CsvContent>;
-    backgroundFile?: File;
-    csvFile?: File;
-  }) => {
-    await createCsvContent(data.name, data.csvData, data.backgroundFile, data.csvFile);
-    if (onContentAdded) {
-      await onContentAdded();
-    }
-    onClose();
+    // モーダルは閉じずに、OBS接続情報を表示するため返す
+    return stream;
   };
 
   return (
@@ -71,10 +52,8 @@ export const ContentAddHandler = ({ opened, onClose, onContentAdded }: ContentAd
       opened={opened}
       onClose={onClose}
       onFileSubmit={handleFileSubmit}
-      onUrlSubmit={handleUrlSubmit}
-      onTextSubmit={handleTextSubmit}
-      onWeatherSubmit={handleWeatherSubmit}
-      onCsvSubmit={handleCsvSubmit}
+      onHlsSubmit={handleHlsSubmit}
+      onLiveStreamSubmit={handleLiveStreamSubmit}
     />
   );
 };

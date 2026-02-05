@@ -77,7 +77,7 @@ export function ScheduleEditModal({ opened, onClose, schedule, onSuccess }: Sche
         time: schedule.time,
         weekdays: schedule.weekdays,
         eventType: schedule.event.type,
-        playlistId: schedule.event.type === "playlist" ? schedule.event.playlistId : undefined,
+        playlistId: schedule.event.type === "playlist" ? (schedule.event.playlistId ?? undefined) : undefined,
         enabled: schedule.enabled,
       });
     } else {
@@ -106,9 +106,7 @@ export function ScheduleEditModal({ opened, onClose, schedule, onSuccess }: Sche
               ? { type: "playlist" as const, playlistId: values.playlistId }
               : values.eventType === "power_on"
                 ? { type: "power_on" as const }
-                : values.eventType === "power_off"
-                  ? { type: "power_off" as const }
-                  : { type: "reboot" as const },
+                : { type: "power_off" as const },
           enabled: values.enabled,
         };
 

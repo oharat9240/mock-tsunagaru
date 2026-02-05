@@ -11,12 +11,6 @@ interface PreviewImageProps {
   imageHeight: number;
 }
 
-const formatDuration = (seconds: number): string => {
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = Math.floor(seconds % 60);
-  return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
-};
-
 export const PreviewImage = ({ contentName, contentType, previewState, imageHeight }: PreviewImageProps) => {
   return (
     <Box pos="relative">
@@ -44,8 +38,8 @@ export const PreviewImage = ({ contentName, contentType, previewState, imageHeig
         />
       </Box>
 
-      {/* オーバーレイアイコン */}
-      {(contentType === "video" || contentType === "youtube") && (
+      {/* オーバーレイアイコン（動画の場合） */}
+      {contentType === "video" && (
         <Flex
           pos="absolute"
           top="50%"
@@ -58,21 +52,6 @@ export const PreviewImage = ({ contentName, contentType, previewState, imageHeig
         >
           <IconPlayerPlay size={24} color="white" />
         </Flex>
-      )}
-
-      {/* 時間表示（動画の場合） */}
-      {(contentType === "video" || contentType === "youtube") && previewState.metadata?.duration && (
-        <Box
-          pos="absolute"
-          bottom="4px"
-          right="4px"
-          bg="rgba(0, 0, 0, 0.8)"
-          c="white"
-          p="2px 6px"
-          style={{ borderRadius: "4px", fontSize: "11px" }}
-        >
-          {formatDuration(previewState.metadata.duration)}
-        </Box>
       )}
 
       {/* タイプバッジ */}
