@@ -12,15 +12,16 @@ export default defineConfig({
     "process.env.BUILD_DATE": JSON.stringify(process.env.BUILD_DATE || new Date().toISOString()),
   },
   server: {
-    host: "0.0.0.0",
+    host: true,
     port: 5173,
     strictPort: true,
-    hmr: {
-      // クライアントのホスト名を自動検出（外部アクセス対応）
-      clientPort: 5173,
-    },
     watch: {
       usePolling: true,
+      interval: 1000,
+    },
+    hmr: {
+      host: "localhost",
+      port: 5173,
     },
   },
 });
