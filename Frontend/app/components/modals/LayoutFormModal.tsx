@@ -227,23 +227,26 @@ export const LayoutFormModal = ({
       size="95%"
       styles={{
         content: {
-          maxWidth: "1200px",
-          height: "85vh",
-          maxHeight: "85vh",
-        },
-        body: {
-          height: "calc(85vh - 60px)", // ヘッダー分を除いた高さ
-          overflow: "hidden",
+          maxWidth: "1100px",
+          height: "min(75vh, 680px)",
+          maxHeight: "min(75vh, 680px)",
           display: "flex",
           flexDirection: "column",
         },
+        body: {
+          flex: 1,
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+          padding: "var(--mantine-spacing-md)",
+        },
       }}
     >
-      <Flex gap="md" w="100%" flex={1} direction="column">
+      <Flex gap="md" w="100%" flex={1} direction="column" style={{ minHeight: 0 }}>
         {/* メインコンテンツエリア */}
-        <Flex gap="md" w="100%" flex={1}>
+        <Flex gap="md" w="100%" flex={1} style={{ minHeight: 0, overflow: "hidden" }}>
           {/* 左側: フォーム */}
-          <Box w="380px" flex="0 0 380px" style={{ overflow: "auto", maxHeight: "100%" }}>
+          <Box w="380px" flex="0 0 380px" style={{ overflow: "auto" }}>
             <Stack gap="md">
               <TextInput
                 label="レイアウト名"
@@ -416,7 +419,7 @@ export const LayoutFormModal = ({
           </Box>
 
           {/* 右側: レイアウトエディター */}
-          <Box flex={1} style={{ minWidth: 0 }}>
+          <Box flex={1} style={{ minWidth: 0, overflow: "auto" }}>
             {isInitialized && (
               <LayoutEditor
                 regions={formData.regions}
@@ -427,9 +430,13 @@ export const LayoutFormModal = ({
           </Box>
         </Flex>
 
-        {/* 下部ボタンエリア */}
-        <Box component="form" onSubmit={handleSubmit}>
-          <Group justify="flex-end" mt="md" pt="md" style={{ borderTop: "1px solid var(--mantine-color-gray-3)" }}>
+        {/* 下部ボタンエリア - 固定表示 */}
+        <Box
+          component="form"
+          onSubmit={handleSubmit}
+          style={{ flexShrink: 0, backgroundColor: "var(--mantine-color-body)" }}
+        >
+          <Group justify="flex-end" pt="md" style={{ borderTop: "1px solid var(--mantine-color-gray-3)" }}>
             <Button variant="subtle" leftSection={<IconX size={16} />} onClick={handleClose} disabled={loading}>
               キャンセル
             </Button>

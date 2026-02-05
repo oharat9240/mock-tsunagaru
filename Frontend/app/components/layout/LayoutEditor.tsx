@@ -12,7 +12,7 @@ import {
   useMantineColorScheme,
 } from "@mantine/core";
 import { IconEdit, IconPlus, IconTrash, IconX } from "@tabler/icons-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import Moveable from "react-moveable";
 import type { Orientation, Region } from "~/types/layout";
 
@@ -141,8 +141,8 @@ export const LayoutEditor = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const outerContainerRef = useRef<HTMLDivElement>(null);
 
-  // orientationに基づいて仮想キャンバスのサイズを取得
-  const virtualCanvasDimensions = getCanvasDimensions(orientation);
+  // orientationに基づいて仮想キャンバスのサイズを取得（useMemoで安定化）
+  const virtualCanvasDimensions = React.useMemo(() => getCanvasDimensions(orientation), [orientation]);
 
   // コンテナサイズを監視（固定サイズが指定されていない場合のみ）
   useEffect(() => {
@@ -162,7 +162,7 @@ export const LayoutEditor = ({
 
         setContainerSize({
           width: availableWidth,
-          height: Math.min(calculatedHeight, 500), // 最大高さ制限
+          height: Math.min(calculatedHeight, 280), // 最大高さ制限をさらに縮小
         });
         setIsContainerReady(true);
       }
@@ -269,7 +269,7 @@ export const LayoutEditor = ({
   }, [isContainerReady]);
 
   return (
-    <Stack gap="md" ref={outerContainerRef}>
+    <Stack gap="xs" ref={outerContainerRef}>
       <Group justify="space-between">
         <Text size="sm" fw={500}>
           レイアウトエディター ({virtualCanvasDimensions.width}×{virtualCanvasDimensions.height})
@@ -604,12 +604,11 @@ export const LayoutEditor = ({
           })}
       </div>
 
-      {/* 選択中のリージョン情報 - 固定高さ */}
+      {/* 選択中のリージョン情報 - コンパクト */}
       <Flex
         align="center"
-        h={40}
-        px="sm"
-        py={8}
+        h={32}
+        px="xs"
         style={{
           backgroundColor: selectedRegionData
             ? colorScheme === "dark"
@@ -619,8 +618,9 @@ export const LayoutEditor = ({
               ? "var(--mantine-color-dark-6)"
               : "var(--mantine-color-gray-0)",
           borderRadius: "4px",
-          fontSize: "12px",
+          fontSize: "11px",
           border: `1px solid ${colorScheme === "dark" ? "var(--mantine-color-dark-4)" : "var(--mantine-color-gray-3)"}`,
+          flexShrink: 0,
         }}
       >
         <Text size="xs" fw={500} c={selectedRegionData ? undefined : "dimmed"}>
