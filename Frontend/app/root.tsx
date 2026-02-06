@@ -50,7 +50,7 @@ const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
 
 export const Layout = ({ children }: { children: React.ReactNode }) => {
   return (
-    <html lang="en" style={{ height: "100%", margin: 0, padding: 0 }} suppressHydrationWarning>
+    <html lang="ja" style={{ height: "100%", margin: 0, padding: 0 }} suppressHydrationWarning>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />

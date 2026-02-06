@@ -1,13 +1,13 @@
 import packageJson from "../../package.json";
 
 // ビルド時の日時を環境変数から取得、なければ現在時刻を使用
-const BUILD_DATE = process.env.BUILD_DATE || new Date().toISOString();
+const BUILD_DATE = import.meta.env.VITE_BUILD_DATE || new Date().toISOString();
 
 // バージョン情報の設定
 export const VERSION_INFO = {
   version: packageJson.version,
   buildDate: BUILD_DATE,
-  environment: process.env.NODE_ENV || "development",
+  environment: import.meta.env.MODE || "development",
 } as const;
 
 // ビルド時に環境変数から読み取れるようにする

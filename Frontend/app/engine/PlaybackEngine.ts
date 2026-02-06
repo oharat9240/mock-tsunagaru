@@ -473,7 +473,10 @@ export class PlaybackEngine {
     if (!regionState || !regionState.currentContent) return;
 
     const currentTime = this.timing.getCurrentTime();
-    logger.debug("PlaybackEngine", `Content complete notification for region ${regionId} at ${currentTime.toFixed(2)}s`);
+    logger.debug(
+      "PlaybackEngine",
+      `Content complete notification for region ${regionId} at ${currentTime.toFixed(2)}s`,
+    );
 
     this.advanceToNextContent(regionState, currentTime);
   }

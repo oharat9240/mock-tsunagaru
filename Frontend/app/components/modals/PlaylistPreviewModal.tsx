@@ -1,7 +1,7 @@
 import { Box, Button, Flex, Group, LoadingOverlay, Modal, Stack, Text, useMantineColorScheme } from "@mantine/core";
 import { IconPlayerPlay } from "@tabler/icons-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { SignageEngine, type RegionProgressInfo, type SignageEngineControl } from "~/engine/SignageEngine";
+import { type RegionProgressInfo, SignageEngine, type SignageEngineControl } from "~/engine/SignageEngine";
 import { useLayout } from "~/hooks/useLayout";
 import { usePlaylist } from "~/hooks/usePlaylist";
 import type { LayoutItem } from "~/types/layout";

@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import multer from "multer";
 import path from "node:path";
 import fs from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import { v4 as uuidv4 } from "uuid";
 import { eq } from "drizzle-orm";
 import ffmpeg from "fluent-ffmpeg";
@@ -41,10 +42,25 @@ const storage = multer.diskStorage({
   },
 });
 
+// 許可するMIMEタイプ
+const ALLOWED_MIME_TYPES = new Set([
+  "image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml", "image/bmp",
+  "video/mp4", "video/webm", "video/ogg", "video/quicktime", "video/x-msvideo", "video/x-matroska",
+  "text/csv", "text/plain",
+  "application/pdf",
+]);
+
 const upload = multer({
   storage,
   limits: {
-    fileSize: 500 * 1024 * 1024, // 500MB
+    fileSize: Number(process.env.MAX_FILE_SIZE) || 500 * 1024 * 1024, // 500MB
+  },
+  fileFilter: (_req, file, cb) => {
+    if (ALLOWED_MIME_TYPES.has(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`File type not allowed: ${file.mimetype}`));
+    }
   },
 });
 
@@ -109,7 +125,9 @@ async function getVideoMetadata(videoPath: string): Promise<VideoMetadata | null
 }
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: process.env.CORS_ORIGIN === "*" ? true : (process.env.CORS_ORIGIN || "http://localhost:5173"),
+}));
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true })); // nginx-rtmpコールバック用
 
@@ -185,6 +203,13 @@ app.post("/api/files/upload", upload.single("file"), async (req: Request, res: R
 app.post("/api/files/thumbnail-base64/:id", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const id = req.params.id as string;
+
+    // IDのバリデーション（パストラバーサル対策）
+    if (!UUID_REGEX.test(id)) {
+      res.status(400).json({ error: "Invalid ID format" });
+      return;
+    }
+
     const { data, mimeType } = req.body;
 
     if (!data) {
@@ -209,11 +234,31 @@ app.post("/api/files/thumbnail-base64/:id", async (req: Request, res: Response, 
   }
 });
 
+// パストラバーサル対策: ファイル名を検証する共通関数
+function sanitizeFilename(filename: string): string | null {
+  // パスセパレータや ".." を含むファイル名を拒否
+  if (filename.includes("..") || filename.includes("/") || filename.includes("\\")) {
+    return null;
+  }
+  return path.basename(filename);
+}
+
 // ファイル削除
 app.delete("/api/files/:filename", async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const filename = req.params.filename as string;
+    const filename = sanitizeFilename(req.params.filename as string);
+    if (!filename) {
+      res.status(400).json({ error: "Invalid filename" });
+      return;
+    }
     const filePath = path.join(UPLOAD_DIR, "files", filename);
+
+    // パスがUPLOAD_DIR内かを確認
+    const resolvedPath = path.resolve(filePath);
+    if (!resolvedPath.startsWith(path.resolve(UPLOAD_DIR))) {
+      res.status(403).json({ error: "Access denied" });
+      return;
+    }
 
     try {
       await fs.unlink(filePath);
@@ -232,8 +277,19 @@ app.delete("/api/files/:filename", async (req: Request, res: Response, next: Nex
 // サムネイル削除
 app.delete("/api/thumbnails/:filename", async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const filename = req.params.filename as string;
+    const filename = sanitizeFilename(req.params.filename as string);
+    if (!filename) {
+      res.status(400).json({ error: "Invalid filename" });
+      return;
+    }
     const filePath = path.join(UPLOAD_DIR, "thumbnails", filename);
+
+    // パスがUPLOAD_DIR内かを確認
+    const resolvedPath = path.resolve(filePath);
+    if (!resolvedPath.startsWith(path.resolve(UPLOAD_DIR))) {
+      res.status(403).json({ error: "Access denied" });
+      return;
+    }
 
     try {
       await fs.unlink(filePath);
@@ -380,10 +436,28 @@ app.put("/api/contents/:id", async (req: Request, res: Response, next: NextFunct
 app.delete("/api/contents/:id", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const id = req.params.id as string;
+
+    // 削除前にコンテンツ情報を取得（関連ファイル削除のため）
+    const existing = await db.select().from(contents).where(eq(contents.id, id)).limit(1);
+
     // 関連するストリームを先に削除（外部キー制約対応）
     await db.delete(streams).where(eq(streams.contentId, id));
     // コンテンツを削除
     await db.delete(contents).where(eq(contents.id, id));
+
+    // 関連するファイルをディスクから削除
+    if (existing.length > 0) {
+      const c = existing[0];
+      if (c.fileStoragePath) {
+        const filePath = path.resolve(c.fileStoragePath.replace(/^\/uploads/, UPLOAD_DIR));
+        try { await fs.unlink(filePath); } catch { /* file may not exist */ }
+      }
+      if (c.fileThumbnailPath) {
+        const thumbPath = path.resolve(c.fileThumbnailPath.replace(/^\/uploads/, UPLOAD_DIR));
+        try { await fs.unlink(thumbPath); } catch { /* file may not exist */ }
+      }
+    }
+
     res.json({ success: true });
   } catch (error) {
     next(error);
@@ -826,11 +900,16 @@ app.get("/api/download/content/:id", async (req: Request, res: Response, next: N
     // オリジナルのファイル名を使用
     const downloadFilename = c.fileOriginalName || path.basename(filePath);
 
-    res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(downloadFilename)}"`);
+    // RFC 5987準拠のContent-Dispositionヘッダー
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${encodeURIComponent(downloadFilename)}"; filename*=UTF-8''${encodeURIComponent(downloadFilename)}`,
+    );
     res.setHeader("Content-Type", c.fileMimeType || "application/octet-stream");
 
-    const fileStream = await fs.readFile(filePath);
-    res.send(fileStream);
+    // ストリーミングでファイルを配信（メモリ効率向上）
+    const readStream = createReadStream(filePath);
+    readStream.pipe(res);
   } catch (error) {
     next(error);
   }
@@ -1187,7 +1266,21 @@ app.post("/api/streams/on-publish-done", async (req: Request, res: Response, nex
 // エラーハンドリング
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   console.error("Error:", err);
-  res.status(500).json({ error: err.message });
+
+  // Multerのファイルサイズ超過エラー
+  if (err.message?.includes("File too large") || (err as { code?: string }).code === "LIMIT_FILE_SIZE") {
+    res.status(413).json({ error: "File size exceeds the limit" });
+    return;
+  }
+
+  // MIMEタイプ不許可エラー
+  if (err.message?.startsWith("File type not allowed")) {
+    res.status(400).json({ error: err.message });
+    return;
+  }
+
+  // 内部エラーメッセージはクライアントに返さない
+  res.status(500).json({ error: "Internal server error" });
 });
 
 // Start server

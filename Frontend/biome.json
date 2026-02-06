@@ -43,5 +43,8 @@
   },
   "vcs": {
     "enabled": false
+  },
+  "files": {
+    "includes": ["app/**", "e2e/**", "*.ts", "*.tsx", "*.json"]
   }
 }

@@ -56,26 +56,29 @@ export const useContent = () => {
   /**
    * ブラウザで動画のメタデータを取得
    */
-  const getVideoMetadataFromBrowser = useCallback(async (file: File): Promise<{ duration: number; width?: number; height?: number } | undefined> => {
-    return new Promise((resolve) => {
-      const video = document.createElement("video");
-      video.preload = "metadata";
-      video.onloadedmetadata = () => {
-        const metadata = {
-          duration: video.duration,
-          width: video.videoWidth || undefined,
-          height: video.videoHeight || undefined,
+  const getVideoMetadataFromBrowser = useCallback(
+    async (file: File): Promise<{ duration: number; width?: number; height?: number } | undefined> => {
+      return new Promise((resolve) => {
+        const video = document.createElement("video");
+        video.preload = "metadata";
+        video.onloadedmetadata = () => {
+          const metadata = {
+            duration: video.duration,
+            width: video.videoWidth || undefined,
+            height: video.videoHeight || undefined,
+          };
+          URL.revokeObjectURL(video.src);
+          resolve(metadata);
         };
-        URL.revokeObjectURL(video.src);
-        resolve(metadata);
-      };
-      video.onerror = () => {
-        URL.revokeObjectURL(video.src);
-        resolve(undefined);
-      };
-      video.src = URL.createObjectURL(file);
-    });
-  }, []);
+        video.onerror = () => {
+          URL.revokeObjectURL(video.src);
+          resolve(undefined);
+        };
+        video.src = URL.createObjectURL(file);
+      });
+    },
+    [],
+  );
 
   /**
    * ファイルをアップロードしてコンテンツを作成

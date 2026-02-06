@@ -31,13 +31,7 @@ interface ContentPreviewModalProps {
 }
 
 // HLSプレイヤーコンポーネント
-const HlsPlayer = memo(function HlsPlayer({
-  url,
-  isLive,
-}: {
-  url: string;
-  isLive?: boolean;
-}) {
+const HlsPlayer = memo(function HlsPlayer({ url, isLive }: { url: string; isLive?: boolean }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const retryIntervalRef = useRef<number | null>(null);
@@ -50,99 +44,102 @@ const HlsPlayer = memo(function HlsPlayer({
   const retryInterval = 5000; // 5秒ごとに再接続
 
   // HLS初期化関数
-  const initHls = useCallback((video: HTMLVideoElement) => {
-    // 既存のHLSインスタンスを破棄
-    if (hlsRef.current) {
-      hlsRef.current.destroy();
-      hlsRef.current = null;
-    }
-
-    setError(null);
-    setIsLoading(true);
-
-    // HLS.jsがサポートされている場合
-    if (Hls.isSupported()) {
-      const hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: isLive, // ライブ配信の場合は低遅延モード
-        liveSyncDurationCount: isLive ? 3 : 3,
-        liveMaxLatencyDurationCount: isLive ? 10 : 10,
-      });
-
-      hls.loadSource(url);
-      hls.attachMedia(video);
-
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        console.debug("[HlsPlayer] Manifest parsed - stream is live");
-        setIsLoading(false);
-        setIsWaitingForStream(false);
-        setError(null);
-        retryCountRef.current = 0;
-        // ポーリングを停止
-        if (retryIntervalRef.current) {
-          clearInterval(retryIntervalRef.current);
-          retryIntervalRef.current = null;
-        }
-        video.play().catch(() => {
-          // 自動再生が拒否された場合は無視
-        });
-      });
-
-      // ストリーム終了時
-      hls.on(Hls.Events.BUFFER_EOS, () => {
-        console.debug("[HlsPlayer] Buffer EOS - stream ended");
-        hls.destroy();
+  const initHls = useCallback(
+    (video: HTMLVideoElement) => {
+      // 既存のHLSインスタンスを破棄
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
         hlsRef.current = null;
-        setIsWaitingForStream(true);
-      });
+      }
 
-      hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (data.fatal) {
-          console.warn("[HlsPlayer] HLS error:", data.type, data.details);
-          switch (data.type) {
-            case Hls.ErrorTypes.NETWORK_ERROR:
-              if (retryCountRef.current < maxRetries) {
-                retryCountRef.current += 1;
-                hls.startLoad();
-              } else {
-                // 最大リトライ回数に達したら待機モードに移行
+      setError(null);
+      setIsLoading(true);
+
+      // HLS.jsがサポートされている場合
+      if (Hls.isSupported()) {
+        const hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: isLive, // ライブ配信の場合は低遅延モード
+          liveSyncDurationCount: isLive ? 3 : 3,
+          liveMaxLatencyDurationCount: isLive ? 10 : 10,
+        });
+
+        hls.loadSource(url);
+        hls.attachMedia(video);
+
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          console.debug("[HlsPlayer] Manifest parsed - stream is live");
+          setIsLoading(false);
+          setIsWaitingForStream(false);
+          setError(null);
+          retryCountRef.current = 0;
+          // ポーリングを停止
+          if (retryIntervalRef.current) {
+            clearInterval(retryIntervalRef.current);
+            retryIntervalRef.current = null;
+          }
+          video.play().catch(() => {
+            // 自動再生が拒否された場合は無視
+          });
+        });
+
+        // ストリーム終了時
+        hls.on(Hls.Events.BUFFER_EOS, () => {
+          console.debug("[HlsPlayer] Buffer EOS - stream ended");
+          hls.destroy();
+          hlsRef.current = null;
+          setIsWaitingForStream(true);
+        });
+
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (data.fatal) {
+            console.warn("[HlsPlayer] HLS error:", data.type, data.details);
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                if (retryCountRef.current < maxRetries) {
+                  retryCountRef.current += 1;
+                  hls.startLoad();
+                } else {
+                  // 最大リトライ回数に達したら待機モードに移行
+                  setIsLoading(false);
+                  hls.destroy();
+                  hlsRef.current = null;
+                  setIsWaitingForStream(true);
+                }
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                hls.recoverMediaError();
+                break;
+              default:
                 setIsLoading(false);
                 hls.destroy();
                 hlsRef.current = null;
                 setIsWaitingForStream(true);
-              }
-              break;
-            case Hls.ErrorTypes.MEDIA_ERROR:
-              hls.recoverMediaError();
-              break;
-            default:
-              setIsLoading(false);
-              hls.destroy();
-              hlsRef.current = null;
-              setIsWaitingForStream(true);
-              break;
+                break;
+            }
           }
-        }
-      });
+        });
 
-      hlsRef.current = hls;
-      return;
-    }
+        hlsRef.current = hls;
+        return;
+      }
 
-    // Safari などネイティブHLSサポートの場合
-    if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = url;
-      video.addEventListener("loadedmetadata", () => {
-        setIsLoading(false);
-        video.play().catch(() => {});
-      });
-      video.addEventListener("error", () => {
-        setIsWaitingForStream(true);
-      });
-    } else {
-      setError("このブラウザはHLSをサポートしていません");
-    }
-  }, [url, isLive]);
+      // Safari などネイティブHLSサポートの場合
+      if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        video.src = url;
+        video.addEventListener("loadedmetadata", () => {
+          setIsLoading(false);
+          video.play().catch(() => {});
+        });
+        video.addEventListener("error", () => {
+          setIsWaitingForStream(true);
+        });
+      } else {
+        setError("このブラウザはHLSをサポートしていません");
+      }
+    },
+    [url, isLive],
+  );
 
   // 初期接続
   useEffect(() => {

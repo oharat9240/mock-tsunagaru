@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, integer, boolean, jsonb, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, timestamp, integer, boolean, jsonb, pgEnum, index } from "drizzle-orm/pg-core";
 
 // Enums
 export const contentTypeEnum = pgEnum("content_type", ["video", "image", "text", "youtube", "url", "weather", "csv", "hls"]);
@@ -44,7 +44,10 @@ export const contents = pgTable("contents", {
 
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (table) => [
+  index("contents_type_idx").on(table.type),
+  index("contents_created_at_idx").on(table.createdAt),
+]);
 
 // Layouts table
 export const layouts = pgTable("layouts", {
@@ -55,19 +58,24 @@ export const layouts = pgTable("layouts", {
 
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (table) => [
+  index("layouts_created_at_idx").on(table.createdAt),
+]);
 
 // Playlists table
 export const playlists = pgTable("playlists", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
-  layoutId: uuid("layout_id").references(() => layouts.id),
+  layoutId: uuid("layout_id").references(() => layouts.id, { onDelete: "set null" }),
   device: text("device"),
   contentAssignments: jsonb("content_assignments").notNull().default([]), // Array of { regionId, contentIds, durations }
 
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (table) => [
+  index("playlists_layout_id_idx").on(table.layoutId),
+  index("playlists_created_at_idx").on(table.createdAt),
+]);
 
 // Schedules table
 export const schedules = pgTable("schedules", {
@@ -76,19 +84,21 @@ export const schedules = pgTable("schedules", {
   time: text("time").notNull(), // HH:MM format
   weekdays: weekdayEnum("weekdays").array().notNull(),
   eventType: eventTypeEnum("event_type").notNull(),
-  playlistId: uuid("playlist_id").references(() => playlists.id),
+  playlistId: uuid("playlist_id").references(() => playlists.id, { onDelete: "cascade" }),
   enabled: boolean("enabled").default(true).notNull(),
 
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (table) => [
+  index("schedules_playlist_id_idx").on(table.playlistId),
+]);
 
 // Streams table (ライブ配信管理)
 export const streams = pgTable("streams", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
   streamKey: text("stream_key").notNull().unique(),
-  contentId: uuid("content_id").references(() => contents.id), // 関連するHLSコンテンツ
+  contentId: uuid("content_id").references(() => contents.id, { onDelete: "set null" }), // 関連するHLSコンテンツ
   status: streamStatusEnum("status").notNull().default("offline"),
   lastLiveAt: timestamp("last_live_at"),
   description: text("description"),
@@ -96,7 +106,9 @@ export const streams = pgTable("streams", {
 
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (table) => [
+  index("streams_content_id_idx").on(table.contentId),
+]);
 
 // Type exports
 export type Content = typeof contents.$inferSelect;

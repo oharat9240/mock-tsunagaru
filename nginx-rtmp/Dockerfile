@@ -13,7 +13,7 @@ RUN git clone https://github.com/arut/nginx-rtmp-module.git /tmp/nginx-rtmp-modu
 
 # nginxをダウンロードしてビルド
 ENV NGINX_VERSION=1.24.0
-RUN wget http://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz && \
+RUN wget https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz && \
     tar -zxvf nginx-${NGINX_VERSION}.tar.gz && \
     cd nginx-${NGINX_VERSION} && \
     ./configure \
@@ -40,9 +40,13 @@ COPY --from=builder /etc/nginx /etc/nginx
 # 設定ファイルをコピー
 COPY nginx.conf /etc/nginx/nginx.conf
 
+# nginxユーザーを作成
+RUN addgroup -S nginx && adduser -S nginx -G nginx
+
 # HLSディレクトリを作成
-RUN mkdir -p /tmp/hls && chmod 777 /tmp/hls
-RUN mkdir -p /var/log/nginx
+RUN mkdir -p /tmp/hls && chown nginx:nginx /tmp/hls && chmod 755 /tmp/hls
+RUN mkdir -p /var/log/nginx && chown nginx:nginx /var/log/nginx
+RUN mkdir -p /var/run && chown nginx:nginx /var/run
 
 EXPOSE 1935 8080
 

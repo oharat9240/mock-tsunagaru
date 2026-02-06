@@ -221,7 +221,7 @@ function HlsRenderer({ url, width, height, fallbackImagePath, isMuted = true }: 
   const [isLoading, setIsLoading] = useState(true);
   const [isWaitingForStream, setIsWaitingForStream] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [retryCount, setRetryCount] = useState(0);
+  const [, setRetryCount] = useState(0);
   const [connectionAttempt, setConnectionAttempt] = useState(0);
   const maxRetries = 3;
   const retryInterval = 5000; // 5秒ごとに再接続を試みる
@@ -230,124 +230,127 @@ function HlsRenderer({ url, width, height, fallbackImagePath, isMuted = true }: 
   const retryCountRef = useRef(0);
 
   // HLS初期化関数
-  const initHls = useCallback(async (video: HTMLVideoElement, mounted: { current: boolean }) => {
-    const HlsClass = await loadHls();
+  const initHls = useCallback(
+    async (video: HTMLVideoElement, mounted: { current: boolean }) => {
+      const HlsClass = await loadHls();
 
-    if (!mounted.current) return;
+      if (!mounted.current) return;
 
-    if (!HlsClass) {
-      // HLS.jsが読み込めない場合、ネイティブHLSサポートを試す
-      if (video.canPlayType("application/vnd.apple.mpegurl")) {
-        video.src = url;
-        video.play().catch((err) => {
-          logger.warn("HlsRenderer", "Native HLS playback failed", err);
-          setIsWaitingForStream(true);
+      if (!HlsClass) {
+        // HLS.jsが読み込めない場合、ネイティブHLSサポートを試す
+        if (video.canPlayType("application/vnd.apple.mpegurl")) {
+          video.src = url;
+          video.play().catch((err) => {
+            logger.warn("HlsRenderer", "Native HLS playback failed", err);
+            setIsWaitingForStream(true);
+            setIsLoading(false);
+          });
           setIsLoading(false);
-        });
-        setIsLoading(false);
+          return;
+        }
+
+        setError("HLSライブラリの読み込みに失敗しました");
         return;
       }
 
-      setError("HLSライブラリの読み込みに失敗しました");
-      return;
-    }
-
-    if (!HlsClass.isSupported()) {
-      // Safari等のネイティブHLSサポートを試す
-      if (video.canPlayType("application/vnd.apple.mpegurl")) {
-        video.src = url;
-        video.play().catch((err) => {
-          logger.warn("HlsRenderer", "Native HLS playback failed", err);
-          setIsWaitingForStream(true);
+      if (!HlsClass.isSupported()) {
+        // Safari等のネイティブHLSサポートを試す
+        if (video.canPlayType("application/vnd.apple.mpegurl")) {
+          video.src = url;
+          video.play().catch((err) => {
+            logger.warn("HlsRenderer", "Native HLS playback failed", err);
+            setIsWaitingForStream(true);
+            setIsLoading(false);
+          });
           setIsLoading(false);
-        });
-        setIsLoading(false);
+          return;
+        }
+
+        setError("このブラウザはHLSをサポートしていません");
         return;
       }
 
-      setError("このブラウザはHLSをサポートしていません");
-      return;
-    }
-
-    // 既存のHLSインスタンスを破棄
-    if (hlsRef.current) {
-      hlsRef.current.destroy();
-      hlsRef.current = null;
-    }
-
-    // HLS.js を使用
-    const hls = new HlsClass({
-      enableWorker: true,
-      lowLatencyMode: true,
-      backBufferLength: 90,
-    });
-
-    hlsRef.current = hls;
-
-    hls.on(HlsClass.Events.MEDIA_ATTACHED, () => {
-      logger.debug("HlsRenderer", "HLS media attached");
-      hls.loadSource(url);
-    });
-
-    hls.on(HlsClass.Events.MANIFEST_PARSED, () => {
-      logger.debug("HlsRenderer", "HLS manifest parsed - stream is live");
-      setIsLoading(false);
-      setIsWaitingForStream(false);
-      setError(null);
-      retryCountRef.current = 0;
-      // 再接続ポーリングを停止
-      if (retryIntervalRef.current) {
-        clearInterval(retryIntervalRef.current);
-        retryIntervalRef.current = null;
+      // 既存のHLSインスタンスを破棄
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
       }
-      video.play().catch((err) => {
-        logger.warn("HlsRenderer", "Auto-play failed", err);
+
+      // HLS.js を使用
+      const hls = new HlsClass({
+        enableWorker: true,
+        lowLatencyMode: true,
+        backBufferLength: 90,
       });
-    });
 
-    // ストリーム終了時（配信が停止された場合）
-    hls.on(HlsClass.Events.BUFFER_EOS, () => {
-      logger.debug("HlsRenderer", "Buffer EOS - stream ended, switching to waiting mode");
-      // 配信が終了したので待機モードに移行
-      hls.destroy();
-      hlsRef.current = null;
-      setIsWaitingForStream(true);
-    });
+      hlsRef.current = hls;
 
-    hls.on(HlsClass.Events.ERROR, (_, data) => {
-      if (data.fatal) {
-        logger.warn("HlsRenderer", `HLS error (will retry): ${data.type} - ${data.details}`);
-        switch (data.type) {
-          case HlsClass.ErrorTypes.NETWORK_ERROR:
-            // ネットワークエラー（ストリームがまだ開始されていない可能性）
-            if (retryCountRef.current < maxRetries) {
-              retryCountRef.current += 1;
-              setRetryCount(retryCountRef.current);
-              hls.startLoad();
-            } else {
-              // 最大リトライ回数に達したら、配信待機モードに移行
+      hls.on(HlsClass.Events.MEDIA_ATTACHED, () => {
+        logger.debug("HlsRenderer", "HLS media attached");
+        hls.loadSource(url);
+      });
+
+      hls.on(HlsClass.Events.MANIFEST_PARSED, () => {
+        logger.debug("HlsRenderer", "HLS manifest parsed - stream is live");
+        setIsLoading(false);
+        setIsWaitingForStream(false);
+        setError(null);
+        retryCountRef.current = 0;
+        // 再接続ポーリングを停止
+        if (retryIntervalRef.current) {
+          clearInterval(retryIntervalRef.current);
+          retryIntervalRef.current = null;
+        }
+        video.play().catch((err) => {
+          logger.warn("HlsRenderer", "Auto-play failed", err);
+        });
+      });
+
+      // ストリーム終了時（配信が停止された場合）
+      hls.on(HlsClass.Events.BUFFER_EOS, () => {
+        logger.debug("HlsRenderer", "Buffer EOS - stream ended, switching to waiting mode");
+        // 配信が終了したので待機モードに移行
+        hls.destroy();
+        hlsRef.current = null;
+        setIsWaitingForStream(true);
+      });
+
+      hls.on(HlsClass.Events.ERROR, (_, data) => {
+        if (data.fatal) {
+          logger.warn("HlsRenderer", `HLS error (will retry): ${data.type} - ${data.details}`);
+          switch (data.type) {
+            case HlsClass.ErrorTypes.NETWORK_ERROR:
+              // ネットワークエラー（ストリームがまだ開始されていない可能性）
+              if (retryCountRef.current < maxRetries) {
+                retryCountRef.current += 1;
+                setRetryCount(retryCountRef.current);
+                hls.startLoad();
+              } else {
+                // 最大リトライ回数に達したら、配信待機モードに移行
+                setIsLoading(false);
+                hls.destroy();
+                hlsRef.current = null;
+                setIsWaitingForStream(true);
+              }
+              break;
+            case HlsClass.ErrorTypes.MEDIA_ERROR:
+              hls.recoverMediaError();
+              break;
+            default:
+              // その他のエラーも配信待機モードに移行
               setIsLoading(false);
               hls.destroy();
               hlsRef.current = null;
               setIsWaitingForStream(true);
-            }
-            break;
-          case HlsClass.ErrorTypes.MEDIA_ERROR:
-            hls.recoverMediaError();
-            break;
-          default:
-            // その他のエラーも配信待機モードに移行
-            setIsLoading(false);
-            hls.destroy();
-            hlsRef.current = null;
-            setIsWaitingForStream(true);
-            break;
+              break;
+          }
         }
-      }
-    });
+      });
 
-    hls.attachMedia(video);
-  }, [url]);
+      hls.attachMedia(video);
+    },
+    [url],
+  );
 
   // 初期接続
   // biome-ignore lint/correctness/useExhaustiveDependencies: URLの変更時のみ再初期化する（initHlsはurlに依存するため安定）
