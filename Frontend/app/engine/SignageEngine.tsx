@@ -8,6 +8,70 @@ import { logger } from "~/utils/logger";
 import { PlaybackEngine } from "./PlaybackEngine";
 import type { EngineConfig, EngineEvent, PlaybackStatus, RegionPlaybackState } from "./types";
 
+/** リージョン進捗情報 */
+export interface RegionProgressInfo {
+  regionId: string;
+  currentContentIndex: number;
+  currentContentName: string;
+  currentContentProgress: number; // 0-100
+  totalProgress: number; // 0-100
+  remainingTime: number; // 秒
+  totalDuration: number; // 秒
+  totalContents: number;
+}
+
+/** コンテンツのdurationを取得するヘルパー */
+function getContentDuration(
+  content: RegionPlaybackState["contents"][number],
+  assignment: RegionPlaybackState["assignment"],
+  defaultDuration: number,
+  detectedDurations?: Map<string, number>,
+): number {
+  const durationInfo = assignment.contentDurations.find((d) => d.contentId === content.id);
+  if (durationInfo) {
+    return durationInfo.duration;
+  }
+  if (content.type === "video") {
+    // 1. メタデータから取得
+    if (content.fileInfo?.metadata?.duration) {
+      return content.fileInfo.metadata.duration;
+    }
+    // 2. 再生時に検出されたdurationを使用
+    if (detectedDurations?.has(content.id)) {
+      return detectedDurations.get(content.id)!;
+    }
+    // 3. 動画でdurationが不明な場合は大きな値を使用（進捗が遡らないようにする）
+    // 検出後に正しい値に更新される
+    return 3600;
+  }
+  return defaultDuration;
+}
+
+/** リージョンの総再生時間を計算 */
+function calculateRegionTotalDuration(
+  regionState: RegionPlaybackState,
+  defaultDuration: number,
+  detectedDurations?: Map<string, number>,
+): number {
+  return regionState.contents.reduce((total, content) => {
+    return total + getContentDuration(content, regionState.assignment, defaultDuration, detectedDurations);
+  }, 0);
+}
+
+/** 現在のコンテンツまでの経過時間を計算 */
+function calculateElapsedTime(
+  regionState: RegionPlaybackState,
+  defaultDuration: number,
+  detectedDurations?: Map<string, number>,
+): number {
+  let elapsed = 0;
+  for (let i = 0; i < regionState.currentIndex; i++) {
+    const content = regionState.contents[i];
+    elapsed += getContentDuration(content, regionState.assignment, defaultDuration, detectedDurations);
+  }
+  return elapsed;
+}
+
 interface SignageEngineProps {
   /** プレイリスト */
   playlist: PlaylistItem;
@@ -15,6 +79,12 @@ interface SignageEngineProps {
   layout: LayoutItem;
   /** 自動再生 */
   autoPlay?: boolean;
+  /** スケール（プレビュー用縮小表示） */
+  scale?: number;
+  /** 一時停止状態（外部制御） */
+  isPaused?: boolean;
+  /** ミュート状態 */
+  isMuted?: boolean;
   /** エンジン設定 */
   config?: Partial<EngineConfig>;
   /** サイクル完了時のコールバック */
@@ -23,6 +93,8 @@ interface SignageEngineProps {
   onError?: (error: string) => void;
   /** ステータス変更時のコールバック */
   onStatusChange?: (status: PlaybackStatus) => void;
+  /** リージョン進捗更新時のコールバック */
+  onRegionProgress?: (info: RegionProgressInfo) => void;
   /** 再生コントロールを外部から取得するための ref */
   controlRef?: React.MutableRefObject<SignageEngineControl | null>;
 }
@@ -32,16 +104,22 @@ export interface SignageEngineControl {
   pause: () => void;
   stop: () => void;
   getStatus: () => PlaybackStatus;
+  /** コンテンツ完了を通知（動画コンテンツ用） */
+  notifyContentComplete: (regionId: string) => void;
 }
 
 export const SignageEngine = memo(function SignageEngine({
   playlist,
   layout,
   autoPlay = true,
+  scale = 1,
+  isPaused: externalPaused = false,
+  isMuted = true,
   config,
   onCycleComplete,
   onError,
   onStatusChange,
+  onRegionProgress,
   controlRef,
 }: SignageEngineProps) {
   const { getContentById } = useContent();
@@ -56,6 +134,10 @@ export const SignageEngine = memo(function SignageEngine({
 
   // エンジン時間（秒単位）
   const [engineTime, setEngineTime] = useState(0);
+
+  // 動画のdurationを動的に保持（メタデータがない動画用）
+  // キー: contentId、値: 検出されたduration
+  const detectedDurationsRef = useRef<Map<string, number>>(new Map());
 
   // エンジン初期化
   // biome-ignore lint/correctness/useExhaustiveDependencies: playlist.id/layout.idの変更時のみ再初期化する（オブジェクト全体の依存は意図的に避ける）
@@ -73,16 +155,39 @@ export const SignageEngine = memo(function SignageEngine({
           onStatusChange?.(event.status);
           break;
 
-        case "contentChange":
+        case "contentChange": {
           // リージョン状態を更新
-          setRegionStates(new Map(engine.getState().regions));
+          const newRegions = new Map(engine.getState().regions);
+          setRegionStates(newRegions);
           // コンテンツキーを更新して ContentRenderer を再マウント
           setContentKeys((prev) => {
             const next = new Map(prev);
             next.set(event.regionId, (prev.get(event.regionId) ?? 0) + 1);
             return next;
           });
+          // リージョン進捗情報を通知
+          const regionState = newRegions.get(event.regionId);
+          if (regionState && onRegionProgress) {
+            const defaultDuration = engine.getConfig().defaultDuration;
+            const detectedDurations = detectedDurationsRef.current;
+            // 総再生時間を計算
+            const totalDuration = calculateRegionTotalDuration(regionState, defaultDuration, detectedDurations);
+            // 現在までの経過時間を計算
+            const elapsedTime = calculateElapsedTime(regionState, defaultDuration, detectedDurations);
+
+            onRegionProgress({
+              regionId: event.regionId,
+              currentContentIndex: regionState.currentIndex,
+              currentContentName: event.content.name,
+              currentContentProgress: 0,
+              totalProgress: totalDuration > 0 ? (elapsedTime / totalDuration) * 100 : 0,
+              remainingTime: totalDuration - elapsedTime,
+              totalDuration,
+              totalContents: regionState.contents.length,
+            });
+          }
           break;
+        }
 
         case "cycleComplete":
           onCycleComplete?.(event.cycleCount);
@@ -93,9 +198,56 @@ export const SignageEngine = memo(function SignageEngine({
           onError?.(event.error);
           break;
 
-        case "timeUpdate":
+        case "timeUpdate": {
           setEngineTime(event.currentTime);
+
+          // 各リージョンの進捗情報を更新
+          if (onRegionProgress) {
+            const currentRegions = engine.getState().regions;
+            const defaultDuration = engine.getConfig().defaultDuration;
+            const detectedDurations = detectedDurationsRef.current;
+
+            for (const [regionId, regionState] of currentRegions) {
+              if (!regionState.currentContent) continue;
+
+              const totalDuration = calculateRegionTotalDuration(regionState, defaultDuration, detectedDurations);
+              const elapsedBeforeCurrent = calculateElapsedTime(regionState, defaultDuration, detectedDurations);
+
+              // 現在のコンテンツの実際のdurationを取得
+              const currentContent = regionState.currentContent.content;
+              const currentContentDuration = getContentDuration(
+                currentContent,
+                regionState.assignment,
+                defaultDuration,
+                detectedDurations,
+              );
+
+              // 現在のコンテンツ内での経過時間（負にならないようにクランプ）
+              const currentContentElapsed = Math.max(0, event.currentTime - regionState.currentContent.startTime);
+              const currentContentProgress =
+                currentContentDuration > 0
+                  ? Math.max(0, Math.min((currentContentElapsed / currentContentDuration) * 100, 100))
+                  : 0;
+
+              // 総経過時間（負にならないようにクランプ）
+              const totalElapsed = Math.max(0, elapsedBeforeCurrent + currentContentElapsed);
+              const totalProgress =
+                totalDuration > 0 ? Math.max(0, Math.min((totalElapsed / totalDuration) * 100, 100)) : 0;
+
+              onRegionProgress({
+                regionId,
+                currentContentIndex: regionState.currentIndex,
+                currentContentName: regionState.currentContent.content.name,
+                currentContentProgress,
+                totalProgress,
+                remainingTime: Math.max(totalDuration - totalElapsed, 0),
+                totalDuration,
+                totalContents: regionState.contents.length,
+              });
+            }
+          }
           break;
+        }
 
         case "preload":
           // プリロードイベントはログ出力のみ（将来の拡張用）
@@ -139,6 +291,17 @@ export const SignageEngine = memo(function SignageEngine({
     };
   }, [playlist.id, layout.id, autoPlay, config, getContentById, onCycleComplete, onError, onStatusChange]);
 
+  // 外部からの一時停止制御
+  useEffect(() => {
+    if (!isReady || !engineRef.current) return;
+
+    if (externalPaused) {
+      engineRef.current.pause();
+    } else {
+      engineRef.current.play();
+    }
+  }, [externalPaused, isReady]);
+
   // 外部コントロール用の ref を設定
   useEffect(() => {
     if (controlRef) {
@@ -147,25 +310,46 @@ export const SignageEngine = memo(function SignageEngine({
         pause: () => engineRef.current?.pause(),
         stop: () => engineRef.current?.stop(),
         getStatus: () => engineRef.current?.getState().status ?? "idle",
+        notifyContentComplete: (regionId: string) => engineRef.current?.notifyContentComplete(regionId),
       };
     }
   }, [controlRef]);
 
-  // キャンバスサイズ計算
+  // キャンバスサイズ計算（scaleを適用）
   const canvasSize = useMemo(() => {
     const BASE_WIDTH = 1920;
     const BASE_HEIGHT = 1080;
 
-    if (layout.orientation === "portrait-right" || layout.orientation === "portrait-left") {
-      return { width: BASE_HEIGHT, height: BASE_WIDTH };
-    }
-    return { width: BASE_WIDTH, height: BASE_HEIGHT };
-  }, [layout.orientation]);
+    let width: number;
+    let height: number;
 
-  // コンテンツ完了時のコールバック（現在は使用しないが将来の拡張用）
+    if (layout.orientation === "portrait-right" || layout.orientation === "portrait-left") {
+      width = BASE_HEIGHT;
+      height = BASE_WIDTH;
+    } else {
+      width = BASE_WIDTH;
+      height = BASE_HEIGHT;
+    }
+
+    return {
+      width: width * scale,
+      height: height * scale,
+      baseWidth: width,
+      baseHeight: height,
+    };
+  }, [layout.orientation, scale]);
+
+  // コンテンツ完了時のコールバック（動画コンテンツの完了通知用）
   const handleContentComplete = useCallback((regionId: string) => {
     logger.debug("SignageEngine", `Content complete in region: ${regionId}`);
-    // PlaybackEngine が自動的に次のコンテンツに進むので、ここでは特に何もしない
+    // PlaybackEngineに動画完了を通知して次のコンテンツに進む
+    engineRef.current?.notifyContentComplete(regionId);
+  }, []);
+
+  // 動画のdurationが検出されたときのコールバック
+  const handleDurationDetected = useCallback((contentId: string, duration: number) => {
+    logger.debug("SignageEngine", `Duration detected for content ${contentId}: ${duration}s`);
+    detectedDurationsRef.current.set(contentId, duration);
   }, []);
 
   if (error) {
@@ -205,15 +389,21 @@ export const SignageEngine = memo(function SignageEngine({
         const currentContent = regionState?.currentContent;
         const contentKey = contentKeys.get(region.id) ?? 0;
 
+        // スケール適用したリージョン座標・サイズ
+        const scaledX = region.x * scale;
+        const scaledY = region.y * scale;
+        const scaledWidth = region.width * scale;
+        const scaledHeight = region.height * scale;
+
         if (!currentContent) {
           return (
             <Box
               key={region.id}
               pos="absolute"
-              left={region.x}
-              top={region.y}
-              w={region.width}
-              h={region.height}
+              left={scaledX}
+              top={scaledY}
+              w={scaledWidth}
+              h={scaledHeight}
               style={{
                 zIndex: region.zIndex,
                 backgroundColor: "#111",
@@ -226,21 +416,23 @@ export const SignageEngine = memo(function SignageEngine({
           <Box
             key={region.id}
             pos="absolute"
-            left={region.x}
-            top={region.y}
-            w={region.width}
-            h={region.height}
+            left={scaledX}
+            top={scaledY}
+            w={scaledWidth}
+            h={scaledHeight}
             style={{ zIndex: region.zIndex, overflow: "hidden" }}
           >
             <ContentRenderer
               key={`${region.id}-${contentKey}`}
               content={currentContent.content}
               duration={currentContent.duration}
-              width={region.width}
-              height={region.height}
+              width={scaledWidth}
+              height={scaledHeight}
               engineTime={engineTime}
               contentStartTime={currentContent.startTime}
+              isMuted={isMuted}
               onComplete={() => handleContentComplete(region.id)}
+              onDurationDetected={(duration) => handleDurationDetected(currentContent.content.id, duration)}
             />
           </Box>
         );

@@ -1,5 +1,5 @@
 import { Box, Group, Progress, Stack, Text, useMantineColorScheme } from "@mantine/core";
-import type { RegionProgressInfo } from "./RegionPlayer";
+import type { RegionProgressInfo } from "~/engine/SignageEngine";
 
 interface PreviewInfoPanelProps {
   progressInfos: RegionProgressInfo[];
@@ -60,27 +60,27 @@ export function PreviewInfoPanel({ progressInfos, playlistName }: PreviewInfoPan
                 {info.currentContentName}
               </Text>
 
-              <Group justify="space-between" mb="xs">
+              {/* 全コンテンツ総合の進行状況 */}
+              <Group justify="space-between" mb="4">
                 <Text size="xs" c="dimmed">
-                  進行状況
+                  総合進行状況
                 </Text>
-                <Text size="xs" c="dimmed">
-                  残り {formatTime(info.remainingTime)}
+                <Text size="xs" fw={500}>
+                  {Math.round(info.totalProgress)}% （残り {formatTime(info.remainingTime)}）
                 </Text>
               </Group>
-
               <Progress value={info.totalProgress} size="sm" mb="xs" />
 
               {/* 現在のコンテンツの進行状況 */}
               <Group justify="space-between" mb="4">
                 <Text size="xs" c="dimmed">
-                  現在のコンテンツ
+                  現在のコンテンツ進行
                 </Text>
                 <Text size="xs" c="dimmed">
                   {Math.round(info.currentContentProgress)}%
                 </Text>
               </Group>
-              <Progress value={info.currentContentProgress} size="xs" />
+              <Progress value={info.currentContentProgress} size="xs" color="gray" />
             </Box>
           ))}
         </Stack>

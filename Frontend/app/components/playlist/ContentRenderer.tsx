@@ -23,12 +23,16 @@ interface ContentRendererProps {
   duration: number; // 秒単位
   onComplete?: () => void;
   onProgress?: (progress: number) => void;
+  /** 動画の実際のdurationが検出されたときに呼ばれる */
+  onDurationDetected?: (duration: number) => void;
   width: number;
   height: number;
   /** エンジン経過時間（秒） */
   engineTime?: number;
   /** このコンテンツの開始時刻（エンジン時間） */
   contentStartTime?: number;
+  /** ミュート状態 */
+  isMuted?: boolean;
 }
 
 export const ContentRenderer = memo(function ContentRenderer({
@@ -36,10 +40,12 @@ export const ContentRenderer = memo(function ContentRenderer({
   duration,
   onComplete,
   onProgress,
+  onDurationDetected,
   width,
   height,
   engineTime = 0,
   contentStartTime = 0,
+  isMuted = true,
 }: ContentRendererProps) {
   const [, setProgress] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -52,6 +58,7 @@ export const ContentRenderer = memo(function ContentRenderer({
   // コールバックをrefで保持
   const onCompleteRef = useRef(onComplete);
   const onProgressRef = useRef(onProgress);
+  const onDurationDetectedRef = useRef(onDurationDetected);
 
   useEffect(() => {
     onCompleteRef.current = onComplete;
@@ -60,6 +67,10 @@ export const ContentRenderer = memo(function ContentRenderer({
   useEffect(() => {
     onProgressRef.current = onProgress;
   }, [onProgress]);
+
+  useEffect(() => {
+    onDurationDetectedRef.current = onDurationDetected;
+  }, [onDurationDetected]);
 
   // ファイルコンテンツのURL生成
   useEffect(() => {
@@ -82,6 +93,14 @@ export const ContentRenderer = memo(function ContentRenderer({
 
     const video = videoRef.current;
 
+    const handleLoadedMetadata = () => {
+      // 動画の実際のdurationを検出したら親に通知
+      if (video.duration && Number.isFinite(video.duration)) {
+        logger.debug("ContentRenderer", `Video duration detected: ${video.duration}s`);
+        onDurationDetectedRef.current?.(video.duration);
+      }
+    };
+
     const handleTimeUpdate = () => {
       if (video.duration) {
         const progress = (video.currentTime / video.duration) * 100;
@@ -91,6 +110,7 @@ export const ContentRenderer = memo(function ContentRenderer({
     };
 
     const handleEnded = () => {
+      logger.debug("ContentRenderer", `Video ended naturally at ${video.currentTime}s / ${video.duration}s`);
       setProgress(100);
       onProgressRef.current?.(100);
       onCompleteRef.current?.();
@@ -105,15 +125,25 @@ export const ContentRenderer = memo(function ContentRenderer({
     const handleError = () => {
       const errorMessage = video.error?.message || "Unknown video error";
       logger.error("ContentRenderer", `Video playback error: ${errorMessage}`);
-      setProgress(100);
-      onProgressRef.current?.(100);
-      onCompleteRef.current?.();
+      // エラー発生時は設定されたduration後に次のコンテンツに進む
+      // メタデータからdurationが取得できない場合のフォールバック
+      const fallbackDuration = duration > 0 && duration < 3600 ? duration : 10;
+      logger.info("ContentRenderer", `Video error, will advance after ${fallbackDuration}s`);
+      setTimeout(() => {
+        onCompleteRef.current?.();
+      }, fallbackDuration * 1000);
     };
 
+    video.addEventListener("loadedmetadata", handleLoadedMetadata);
     video.addEventListener("timeupdate", handleTimeUpdate);
     video.addEventListener("ended", handleEnded);
     video.addEventListener("canplay", handleCanPlay);
     video.addEventListener("error", handleError);
+
+    // 既にメタデータがロード済みの場合
+    if (video.readyState >= 1 && video.duration && Number.isFinite(video.duration)) {
+      onDurationDetectedRef.current?.(video.duration);
+    }
 
     if (video.readyState >= 3) {
       video.play().catch((err) => {
@@ -122,6 +152,7 @@ export const ContentRenderer = memo(function ContentRenderer({
     }
 
     return () => {
+      video.removeEventListener("loadedmetadata", handleLoadedMetadata);
       video.removeEventListener("timeupdate", handleTimeUpdate);
       video.removeEventListener("ended", handleEnded);
       video.removeEventListener("canplay", handleCanPlay);
@@ -147,7 +178,9 @@ export const ContentRenderer = memo(function ContentRenderer({
 
     switch (content.type) {
       case "video":
-        return <video ref={videoRef} src={videoUrl || undefined} style={commonStyle} autoPlay muted playsInline />;
+        return (
+          <video ref={videoRef} src={videoUrl || undefined} style={commonStyle} autoPlay muted={isMuted} playsInline />
+        );
 
       case "image":
         return <img src={imageUrl || undefined} alt={content.name} style={commonStyle} />;
@@ -160,6 +193,7 @@ export const ContentRenderer = memo(function ContentRenderer({
             width={width}
             height={height}
             fallbackImagePath={content.hlsInfo.fallbackImagePath}
+            isMuted={isMuted}
           />
         );
 
@@ -177,9 +211,10 @@ interface HlsRendererProps {
   width: number;
   height: number;
   fallbackImagePath?: string;
+  isMuted?: boolean;
 }
 
-function HlsRenderer({ url, width, height, fallbackImagePath }: HlsRendererProps) {
+function HlsRenderer({ url, width, height, fallbackImagePath, isMuted = true }: HlsRendererProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -331,7 +366,7 @@ function HlsRenderer({ url, width, height, fallbackImagePath }: HlsRendererProps
         ref={videoRef}
         style={{ width: "100%", height: "100%", objectFit: "contain" }}
         autoPlay
-        muted
+        muted={isMuted}
         playsInline
       />
     </Box>

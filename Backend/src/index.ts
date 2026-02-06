@@ -75,6 +75,39 @@ function isVideoMimeType(mimeType: string): boolean {
   return mimeType.startsWith("video/");
 }
 
+// 動画のメタデータ（duration, width, height）を取得
+interface VideoMetadata {
+  duration: number;
+  width?: number;
+  height?: number;
+}
+
+async function getVideoMetadata(videoPath: string): Promise<VideoMetadata | null> {
+  return new Promise((resolve) => {
+    ffmpeg.ffprobe(videoPath, (err, metadata) => {
+      if (err) {
+        console.error("Failed to get video metadata:", err);
+        resolve(null);
+        return;
+      }
+
+      const videoStream = metadata.streams.find((s) => s.codec_type === "video");
+      const duration = metadata.format.duration;
+
+      if (duration === undefined) {
+        resolve(null);
+        return;
+      }
+
+      resolve({
+        duration,
+        width: videoStream?.width,
+        height: videoStream?.height,
+      });
+    });
+  });
+}
+
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
@@ -107,19 +140,27 @@ app.post("/api/files/upload", upload.single("file"), async (req: Request, res: R
 
     const fileId = path.basename(req.file.filename, path.extname(req.file.filename));
     let thumbnailPath: string | undefined;
+    let metadata: VideoMetadata | null = null;
 
-    // 動画の場合はサムネイルを生成
+    // 動画の場合はサムネイルとメタデータを取得
     if (isVideoMimeType(req.file.mimetype)) {
       const videoPath = path.join(UPLOAD_DIR, "files", req.file.filename);
       const thumbnailFilename = `${fileId}.jpg`;
       const thumbnailFullPath = path.join(UPLOAD_DIR, "thumbnails", thumbnailFilename);
 
+      // サムネイル生成
       try {
         await generateVideoThumbnail(videoPath, thumbnailFullPath);
         thumbnailPath = `/uploads/thumbnails/${thumbnailFilename}`;
       } catch (error) {
         console.error("Failed to generate thumbnail:", error);
         // サムネイル生成に失敗してもアップロード自体は成功とする
+      }
+
+      // メタデータ取得
+      metadata = await getVideoMetadata(videoPath);
+      if (metadata) {
+        console.log("Video metadata:", metadata);
       }
     }
 
@@ -131,6 +172,7 @@ app.post("/api/files/upload", upload.single("file"), async (req: Request, res: R
       size: req.file.size,
       path: `/uploads/files/${req.file.filename}`,
       thumbnailPath,
+      metadata: metadata || undefined,
     };
 
     res.json(fileInfo);

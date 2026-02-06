@@ -1,13 +1,13 @@
 import { Box, Button, Flex, Group, LoadingOverlay, Modal, Stack, Text, useMantineColorScheme } from "@mantine/core";
 import { IconPlayerPlay } from "@tabler/icons-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { SignageEngine, type RegionProgressInfo, type SignageEngineControl } from "~/engine/SignageEngine";
 import { useLayout } from "~/hooks/useLayout";
 import { usePlaylist } from "~/hooks/usePlaylist";
 import type { LayoutItem } from "~/types/layout";
 import type { PlaylistItem } from "~/types/playlist";
 import { logger } from "~/utils/logger";
 import { PreviewInfoPanel } from "../playlist/PreviewInfoPanel";
-import { RegionPlayer, type RegionProgressInfo } from "../playlist/RegionPlayer";
 
 interface PlaylistPreviewModalProps {
   opened: boolean;
@@ -25,6 +25,7 @@ export function PlaylistPreviewModal({ opened, onClose, playlistId, onPlay }: Pl
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progressInfos, setProgressInfos] = useState<RegionProgressInfo[]>([]);
+  const controlRef = useRef<SignageEngineControl | null>(null);
 
   // プレイリストとレイアウト情報を読み込み
   useEffect(() => {
@@ -56,9 +57,9 @@ export function PlaylistPreviewModal({ opened, onClose, playlistId, onPlay }: Pl
 
         // プログレス情報を初期化
         setProgressInfos([]);
-      } catch (error) {
-        logger.error("PlaylistPreviewModal", "Failed to load playlist data", error);
-        setError(error instanceof Error ? error.message : "データの読み込みに失敗しました");
+      } catch (err) {
+        logger.error("PlaylistPreviewModal", "Failed to load playlist data", err);
+        setError(err instanceof Error ? err.message : "データの読み込みに失敗しました");
       } finally {
         setLoading(false);
       }
@@ -82,9 +83,9 @@ export function PlaylistPreviewModal({ opened, onClose, playlistId, onPlay }: Pl
     });
   }, []);
 
-  // レイアウトの向きに応じたキャンバスサイズを計算（メモ化）
-  const canvasDimensions = useMemo(() => {
-    if (!layout) return { width: 800, height: 600, scale: 1 };
+  // レイアウトの向きに応じたスケールを計算（メモ化）
+  const previewScale = useMemo(() => {
+    if (!layout) return 1;
 
     // レイアウトの実際のサイズを取得（ベースサイズ）
     const BASE_CANVAS_WIDTH = 1920;
@@ -108,78 +109,30 @@ export function PlaylistPreviewModal({ opened, onClose, playlistId, onPlay }: Pl
     // スケールを計算（縦横比を保持）
     const scaleX = maxPreviewWidth / layoutWidth;
     const scaleY = maxPreviewHeight / layoutHeight;
-    const scale = Math.min(scaleX, scaleY);
-
-    return {
-      width: layoutWidth * scale,
-      height: layoutHeight * scale,
-      scale,
-    };
+    return Math.min(scaleX, scaleY);
   }, [layout]);
 
-  // リージョンプレイヤーのメモ化
-  const regionPlayers = useMemo(() => {
-    if (!layout || !playlist) return [];
-
-    return layout.regions.map((region, index) => {
-      const assignment = playlist.contentAssignments.find((a) => a.regionId === region.id);
-
-      // スケールされたリージョンプロパティ
-      const scaledRegion = {
-        ...region,
-        x: region.x * canvasDimensions.scale,
-        y: region.y * canvasDimensions.scale,
-        width: region.width * canvasDimensions.scale,
-        height: region.height * canvasDimensions.scale,
-      };
-
-      if (!assignment) {
-        return (
-          <Box
-            key={region.id}
-            pos="absolute"
-            left={scaledRegion.x}
-            top={scaledRegion.y}
-            w={scaledRegion.width}
-            h={scaledRegion.height}
-            display="flex"
-            style={{
-              zIndex: region.zIndex,
-              backgroundColor: colorScheme === "dark" ? "var(--mantine-color-dark-6)" : "var(--mantine-color-gray-0)",
-              border: `2px dashed ${colorScheme === "dark" ? "var(--mantine-color-dark-4)" : "var(--mantine-color-gray-4)"}`,
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: "14px",
-              color: colorScheme === "dark" ? "var(--mantine-color-dark-2)" : "var(--mantine-color-gray-6)",
-            }}
-          >
-            リージョン {index + 1}
-            <br />
-            (コンテンツ未設定)
-          </Box>
-        );
-      }
-
-      return (
-        <RegionPlayer key={region.id} region={scaledRegion} assignment={assignment} onProgress={handleProgressUpdate} />
-      );
-    });
-  }, [layout, playlist, canvasDimensions.scale, handleProgressUpdate, colorScheme]);
-
   // モーダルクローズ時のクリーンアップ
-  const handleClose = () => {
+  const handleClose = useCallback(() => {
+    // エンジンを停止
+    controlRef.current?.stop();
     setPlaylist(null);
     setLayout(null);
     setProgressInfos([]);
     setError(null);
     onClose();
-  };
+  }, [onClose]);
+
+  // エラーハンドラー
+  const handleError = useCallback((errorMsg: string) => {
+    setError(errorMsg);
+  }, []);
 
   if (!opened) return null;
 
   const handlePlay = () => {
     if (playlistId && onPlay) {
-      onClose();
+      handleClose();
       onPlay(playlistId);
     }
   };
@@ -216,21 +169,24 @@ export function PlaylistPreviewModal({ opened, onClose, playlistId, onPlay }: Pl
             </Stack>
           ) : playlist && layout ? (
             <Flex justify="center" align="center" h="100%">
-              {/* プレビューキャンバス */}
+              {/* SignageEngineによるプレビュー（フルスクリーン再生と同一エンジン） */}
               <Box
-                pos="relative"
-                w={canvasDimensions.width}
-                h={canvasDimensions.height}
                 style={{
                   border: `2px solid ${colorScheme === "dark" ? "var(--mantine-color-dark-4)" : "var(--mantine-color-gray-4)"}`,
-                  backgroundColor:
-                    colorScheme === "dark" ? "var(--mantine-color-dark-7)" : "var(--mantine-color-white)",
-                  overflow: "hidden",
                   borderRadius: "8px",
+                  overflow: "hidden",
                 }}
               >
-                {/* 各リージョンのプレイヤー（メモ化） */}
-                {regionPlayers}
+                <SignageEngine
+                  playlist={playlist}
+                  layout={layout}
+                  scale={previewScale}
+                  autoPlay={true}
+                  isMuted={false}
+                  controlRef={controlRef}
+                  onRegionProgress={handleProgressUpdate}
+                  onError={handleError}
+                />
               </Box>
             </Flex>
           ) : (

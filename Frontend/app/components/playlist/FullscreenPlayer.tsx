@@ -8,13 +8,13 @@ import {
   IconVolumeOff,
   IconX,
 } from "@tabler/icons-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { SignageEngine, type SignageEngineControl } from "~/engine/SignageEngine";
 import { useLayout } from "~/hooks/useLayout";
 import { usePlaylist } from "~/hooks/usePlaylist";
 import type { LayoutItem } from "~/types/layout";
 import type { PlaylistItem } from "~/types/playlist";
 import { logger } from "~/utils/logger";
-import { RegionPlayerFullscreen } from "./RegionPlayerFullscreen";
 
 interface FullscreenPlayerProps {
   playlistId: string;
@@ -34,6 +34,7 @@ export const FullscreenPlayer = memo(function FullscreenPlayer({ playlistId, onC
   const [showControls, setShowControls] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
   const controlsTimeoutRef = useRef<number | null>(null);
+  const engineControlRef = useRef<SignageEngineControl | null>(null);
 
   // データ読み込み
   useEffect(() => {
@@ -141,76 +142,10 @@ export const FullscreenPlayer = memo(function FullscreenPlayer({ playlistId, onC
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isFullscreen, toggleFullscreen, onClose, resetControlsTimeout]);
 
-  // キャンバスサイズの計算
-  const canvasDimensions = useMemo(() => {
-    if (!layout) return { width: 1920, height: 1080, scale: 1 };
-
-    const BASE_CANVAS_WIDTH = 1920;
-    const BASE_CANVAS_HEIGHT = 1080;
-
-    let layoutWidth: number;
-    let layoutHeight: number;
-
-    if (layout.orientation === "portrait-right" || layout.orientation === "portrait-left") {
-      layoutWidth = BASE_CANVAS_HEIGHT;
-      layoutHeight = BASE_CANVAS_WIDTH;
-    } else {
-      layoutWidth = BASE_CANVAS_WIDTH;
-      layoutHeight = BASE_CANVAS_HEIGHT;
-    }
-
-    return {
-      width: layoutWidth,
-      height: layoutHeight,
-      scale: 1,
-    };
-  }, [layout]);
-
-  // リージョンプレイヤーの生成
-  const regionPlayers = useMemo(() => {
-    if (!layout || !playlist) return [];
-
-    return layout.regions.map((region, index) => {
-      const assignment = playlist.contentAssignments.find((a) => a.regionId === region.id);
-
-      if (!assignment) {
-        return (
-          <Box
-            key={region.id}
-            pos="absolute"
-            left={region.x}
-            top={region.y}
-            w={region.width}
-            h={region.height}
-            display="flex"
-            style={{
-              zIndex: region.zIndex,
-              backgroundColor: "#1a1a1a",
-              border: "2px dashed #444",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: "18px",
-              color: "#666",
-            }}
-          >
-            リージョン {index + 1}
-            <br />
-            (コンテンツ未設定)
-          </Box>
-        );
-      }
-
-      return (
-        <RegionPlayerFullscreen
-          key={region.id}
-          region={region}
-          assignment={assignment}
-          isPaused={isPaused}
-          isMuted={isMuted}
-        />
-      );
-    });
-  }, [layout, playlist, isPaused, isMuted]);
+  // エラーハンドラー
+  const handleEngineError = useCallback((errorMsg: string) => {
+    setError(errorMsg);
+  }, []);
 
   if (loading) {
     return (
@@ -272,21 +207,29 @@ export const FullscreenPlayer = memo(function FullscreenPlayer({ playlistId, onC
       style={{ zIndex: 9999, cursor: showControls ? "default" : "none" }}
       onMouseMove={handleMouseMove}
     >
-      {/* プレイヤーキャンバス */}
-      <Box
-        pos="absolute"
-        top="50%"
-        left="50%"
-        w={canvasDimensions.width}
-        h={canvasDimensions.height}
-        style={{
-          transform: "translate(-50%, -50%)",
-          transformOrigin: "center",
-          overflow: "hidden",
-        }}
-      >
-        {regionPlayers}
-      </Box>
+      {/* SignageEngineによる再生（プレビューと同一エンジン） */}
+      {playlist && layout && (
+        <Box
+          pos="absolute"
+          top="50%"
+          left="50%"
+          style={{
+            transform: "translate(-50%, -50%)",
+            transformOrigin: "center",
+          }}
+        >
+          <SignageEngine
+            playlist={playlist}
+            layout={layout}
+            scale={1}
+            autoPlay={true}
+            isPaused={isPaused}
+            isMuted={isMuted}
+            controlRef={engineControlRef}
+            onError={handleEngineError}
+          />
+        </Box>
+      )}
 
       {/* コントロールバー */}
       <Box

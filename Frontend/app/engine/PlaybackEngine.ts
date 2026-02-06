@@ -273,19 +273,24 @@ export class PlaybackEngine {
       // プリロードチェック（次コンテンツがある場合）
       this.checkPreload(regionState, currentTime);
 
-      // コンテンツ終了チェック（秒単位の精度で判定）
-      const endTimeFloor = Math.floor(regionState.currentContent.endTime);
-      const currentTimeFloor = Math.floor(currentTime);
+      // 動画コンテンツはタイマーベースの切り替えをしない（ContentRendererからの完了通知を待つ）
+      const isVideoContent = regionState.currentContent.content.type === "video";
 
-      if (currentTimeFloor >= endTimeFloor) {
-        this.advanceToNextContent(regionState, currentTime);
+      if (!isVideoContent) {
+        // コンテンツ終了チェック（秒単位の精度で判定）- 動画以外
+        const endTimeFloor = Math.floor(regionState.currentContent.endTime);
+        const currentTimeFloor = Math.floor(currentTime);
+
+        if (currentTimeFloor >= endTimeFloor) {
+          this.advanceToNextContent(regionState, currentTime);
+        }
       }
 
       // まだ完了していないリージョンがあるかチェック
       const isLastContent = regionState.currentIndex >= regionState.contents.length - 1;
-      const isContentPlaying = regionState.currentContent && currentTime < regionState.currentContent.endTime;
+      const hasCurrentContent = regionState.currentContent !== null;
 
-      if (!isLastContent || isContentPlaying) {
+      if (!isLastContent || hasCurrentContent) {
         allRegionsComplete = false;
       }
     }
@@ -439,20 +444,38 @@ export class PlaybackEngine {
    * コンテンツの再生時間を取得
    */
   private getContentDuration(content: ContentItem, regionState: RegionPlaybackState): number {
-    // 設定された再生時間を探す
+    // 動画の場合は常に実際の尺を使用（設定値を無視）
+    // これにより動画が途中で切り替わることを防ぐ
+    if (content.type === "video") {
+      if (content.fileInfo?.metadata?.duration) {
+        return content.fileInfo.metadata.duration;
+      }
+      // メタデータがない場合は十分に長い時間を設定（ContentRendererのendedイベントで切り替え）
+      return 3600; // 1時間（実際にはendedイベントで切り替わる）
+    }
+
+    // 動画以外: 設定された再生時間を探す
     const durationInfo = regionState.assignment.contentDurations.find((d) => d.contentId === content.id);
 
     if (durationInfo) {
       return durationInfo.duration;
     }
 
-    // 動画の場合は実際の尺を使用
-    if (content.type === "video" && content.fileInfo?.metadata?.duration) {
-      return content.fileInfo.metadata.duration;
-    }
-
     // 静止画・HLSはデフォルト再生時間を使用
     return this.config.defaultDuration;
+  }
+
+  /**
+   * 指定リージョンのコンテンツ完了を通知（動画コンテンツ用）
+   */
+  notifyContentComplete(regionId: string): void {
+    const regionState = this.state.regions.get(regionId);
+    if (!regionState || !regionState.currentContent) return;
+
+    const currentTime = this.timing.getCurrentTime();
+    logger.debug("PlaybackEngine", `Content complete notification for region ${regionId} at ${currentTime.toFixed(2)}s`);
+
+    this.advanceToNextContent(regionState, currentTime);
   }
 
   /**

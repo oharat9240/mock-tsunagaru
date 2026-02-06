@@ -10,6 +10,11 @@ export interface FileUploadResult {
   size: number;
   path: string;
   thumbnailPath?: string;
+  metadata?: {
+    duration: number;
+    width?: number;
+    height?: number;
+  };
 }
 
 export interface ThumbnailUploadResult {

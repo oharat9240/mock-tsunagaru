@@ -54,6 +54,30 @@ export const useContent = () => {
   }, []);
 
   /**
+   * ブラウザで動画のメタデータを取得
+   */
+  const getVideoMetadataFromBrowser = useCallback(async (file: File): Promise<{ duration: number; width?: number; height?: number } | undefined> => {
+    return new Promise((resolve) => {
+      const video = document.createElement("video");
+      video.preload = "metadata";
+      video.onloadedmetadata = () => {
+        const metadata = {
+          duration: video.duration,
+          width: video.videoWidth || undefined,
+          height: video.videoHeight || undefined,
+        };
+        URL.revokeObjectURL(video.src);
+        resolve(metadata);
+      };
+      video.onerror = () => {
+        URL.revokeObjectURL(video.src);
+        resolve(undefined);
+      };
+      video.src = URL.createObjectURL(file);
+    });
+  }, []);
+
+  /**
    * ファイルをアップロードしてコンテンツを作成
    */
   const createFileContent = useCallback(
@@ -65,6 +89,13 @@ export const useContent = () => {
       const uploadResult = await apiClient.uploadFile(file);
       const id = uploadResult.id;
 
+      // メタデータを取得（サーバーから取得できなかった場合はブラウザで取得）
+      let metadata = uploadResult.metadata;
+      if (!metadata && contentType === "video") {
+        metadata = await getVideoMetadataFromBrowser(file);
+        logger.debug("Content", "Video metadata from browser:", metadata);
+      }
+
       const newContent: ContentItem = {
         id,
         name: name || file.name,
@@ -75,6 +106,7 @@ export const useContent = () => {
           mimeType: file.type,
           storagePath: uploadResult.path,
           thumbnailPath: uploadResult.thumbnailPath, // サムネイルパスを追加
+          metadata, // 動画のメタデータ（duration, width, height）
         },
         tags: [],
         createdAt: now,
