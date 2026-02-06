@@ -40,12 +40,22 @@ const HlsPlayer = memo(function HlsPlayer({
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const retryIntervalRef = useRef<number | null>(null);
+  const retryCountRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isWaitingForStream, setIsWaitingForStream] = useState(false);
+  const [connectionAttempt, setConnectionAttempt] = useState(0);
+  const maxRetries = 3;
+  const retryInterval = 5000; // 5秒ごとに再接続
 
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video || !url) return;
+  // HLS初期化関数
+  const initHls = useCallback((video: HTMLVideoElement) => {
+    // 既存のHLSインスタンスを破棄
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
 
     setError(null);
     setIsLoading(true);
@@ -63,39 +73,62 @@ const HlsPlayer = memo(function HlsPlayer({
       hls.attachMedia(video);
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        console.debug("[HlsPlayer] Manifest parsed - stream is live");
         setIsLoading(false);
+        setIsWaitingForStream(false);
+        setError(null);
+        retryCountRef.current = 0;
+        // ポーリングを停止
+        if (retryIntervalRef.current) {
+          clearInterval(retryIntervalRef.current);
+          retryIntervalRef.current = null;
+        }
         video.play().catch(() => {
           // 自動再生が拒否された場合は無視
         });
       });
 
+      // ストリーム終了時
+      hls.on(Hls.Events.BUFFER_EOS, () => {
+        console.debug("[HlsPlayer] Buffer EOS - stream ended");
+        hls.destroy();
+        hlsRef.current = null;
+        setIsWaitingForStream(true);
+      });
+
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (data.fatal) {
+          console.warn("[HlsPlayer] HLS error:", data.type, data.details);
           switch (data.type) {
             case Hls.ErrorTypes.NETWORK_ERROR:
-              setError("ネットワークエラー: ストリームに接続できません");
-              // リトライ
-              hls.startLoad();
+              if (retryCountRef.current < maxRetries) {
+                retryCountRef.current += 1;
+                hls.startLoad();
+              } else {
+                // 最大リトライ回数に達したら待機モードに移行
+                setIsLoading(false);
+                hls.destroy();
+                hlsRef.current = null;
+                setIsWaitingForStream(true);
+              }
               break;
             case Hls.ErrorTypes.MEDIA_ERROR:
-              setError("メディアエラー: 再生できません");
               hls.recoverMediaError();
               break;
             default:
-              setError("ストリームの読み込みに失敗しました");
+              setIsLoading(false);
               hls.destroy();
+              hlsRef.current = null;
+              setIsWaitingForStream(true);
               break;
           }
         }
       });
 
       hlsRef.current = hls;
-
-      return () => {
-        hls.destroy();
-        hlsRef.current = null;
-      };
+      return;
     }
+
     // Safari などネイティブHLSサポートの場合
     if (video.canPlayType("application/vnd.apple.mpegurl")) {
       video.src = url;
@@ -104,16 +137,82 @@ const HlsPlayer = memo(function HlsPlayer({
         video.play().catch(() => {});
       });
       video.addEventListener("error", () => {
-        setError("ストリームの読み込みに失敗しました");
+        setIsWaitingForStream(true);
       });
     } else {
       setError("このブラウザはHLSをサポートしていません");
     }
   }, [url, isLive]);
 
+  // 初期接続
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !url) return;
+
+    setIsWaitingForStream(false);
+    setConnectionAttempt(0);
+    retryCountRef.current = 0;
+    initHls(video);
+
+    return () => {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+      if (retryIntervalRef.current) {
+        clearInterval(retryIntervalRef.current);
+        retryIntervalRef.current = null;
+      }
+    };
+  }, [url, isLive, initHls]);
+
+  // 配信待機中のポーリング
+  useEffect(() => {
+    if (!isWaitingForStream) {
+      if (retryIntervalRef.current) {
+        console.debug("[HlsPlayer] Stopping polling - stream is active");
+        clearInterval(retryIntervalRef.current);
+        retryIntervalRef.current = null;
+      }
+      return;
+    }
+
+    if (!videoRef.current) return;
+
+    console.debug("[HlsPlayer] Starting polling for stream availability");
+
+    if (retryIntervalRef.current) {
+      clearInterval(retryIntervalRef.current);
+    }
+
+    retryIntervalRef.current = window.setInterval(() => {
+      console.debug("[HlsPlayer] Polling: attempting to reconnect...");
+      retryCountRef.current = 0;
+      setConnectionAttempt((prev) => prev + 1);
+    }, retryInterval);
+
+    return () => {
+      if (retryIntervalRef.current) {
+        clearInterval(retryIntervalRef.current);
+        retryIntervalRef.current = null;
+      }
+    };
+  }, [isWaitingForStream]);
+
+  // 再接続試行
+  // biome-ignore lint/correctness/useExhaustiveDependencies: connectionAttemptの変更時のみ再接続
+  useEffect(() => {
+    if (connectionAttempt === 0 || !videoRef.current || !isWaitingForStream) return;
+
+    console.debug("[HlsPlayer] Reconnection attempt #", connectionAttempt);
+    const video = videoRef.current;
+    setIsLoading(true);
+    initHls(video);
+  }, [connectionAttempt]);
+
   return (
     <Box pos="relative">
-      {isLive && (
+      {isLive && !isWaitingForStream && !error && (
         <Badge
           color="red"
           variant="filled"
@@ -128,13 +227,39 @@ const HlsPlayer = memo(function HlsPlayer({
         </Badge>
       )}
       <AspectRatio ratio={16 / 9}>
-        {error ? (
+        {/* video要素は常にDOMに保持し、ポーリングが機能するようにする */}
+        {/* biome-ignore lint/a11y/useMediaCaption: プレビュー用 */}
+        <video
+          ref={videoRef}
+          controls={!isLive}
+          playsInline
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "contain",
+            backgroundColor: "#1a1a1a",
+            // 配信待機中やエラー時は非表示
+            display: isWaitingForStream || error ? "none" : "block",
+          }}
+          onEnded={() => {
+            // 配信終了時は待機状態に戻る
+            if (hlsRef.current) {
+              hlsRef.current.destroy();
+              hlsRef.current = null;
+            }
+            setIsWaitingForStream(true);
+          }}
+        />
+        {/* エラー表示 */}
+        {error && (
           <Box
             style={{
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               backgroundColor: "#1a1a1a",
+              position: "absolute",
+              inset: 0,
             }}
           >
             <Stack align="center" gap="sm">
@@ -148,38 +273,41 @@ const HlsPlayer = memo(function HlsPlayer({
               )}
             </Stack>
           </Box>
-        ) : (
-          <>
-            {/* biome-ignore lint/a11y/useMediaCaption: プレビュー用 */}
-            <video
-              ref={videoRef}
-              controls
-              playsInline
-              style={{
-                width: "100%",
-                height: "100%",
-                objectFit: "contain",
-                backgroundColor: "#1a1a1a",
-              }}
-            />
-            {isLoading && (
-              <Box
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  backgroundColor: "rgba(0,0,0,0.5)",
-                }}
-              >
-                <Text c="white">読み込み中...</Text>
-              </Box>
-            )}
-          </>
+        )}
+        {/* 配信待機中表示 */}
+        {isWaitingForStream && !error && (
+          <Box
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: "#1a1a1a",
+              gap: 8,
+              position: "absolute",
+              inset: 0,
+            }}
+          >
+            <Text c="white">配信開始を待機中...</Text>
+            <Text c="dimmed" size="xs">
+              配信が開始されると自動的に表示されます
+            </Text>
+          </Box>
+        )}
+        {/* 読み込み中表示 */}
+        {isLoading && !isWaitingForStream && !error && (
+          <Box
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: "rgba(0,0,0,0.5)",
+            }}
+          >
+            <Text c="white">読み込み中...</Text>
+          </Box>
         )}
       </AspectRatio>
     </Box>
