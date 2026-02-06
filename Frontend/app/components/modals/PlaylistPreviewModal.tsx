@@ -1,4 +1,5 @@
 import { Box, Button, Flex, Group, LoadingOverlay, Modal, Stack, Text, useMantineColorScheme } from "@mantine/core";
+import { useElementSize } from "@mantine/hooks";
 import { IconPlayerPlay } from "@tabler/icons-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type RegionProgressInfo, SignageEngine, type SignageEngineControl } from "~/engine/SignageEngine";
@@ -26,6 +27,7 @@ export function PlaylistPreviewModal({ opened, onClose, playlistId, onPlay }: Pl
   const [error, setError] = useState<string | null>(null);
   const [progressInfos, setProgressInfos] = useState<RegionProgressInfo[]>([]);
   const controlRef = useRef<SignageEngineControl | null>(null);
+  const { ref: previewAreaRef, width: previewAreaWidth, height: previewAreaHeight } = useElementSize();
 
   // プレイリストとレイアウト情報を読み込み
   useEffect(() => {
@@ -84,6 +86,7 @@ export function PlaylistPreviewModal({ opened, onClose, playlistId, onPlay }: Pl
   }, []);
 
   // レイアウトの向きに応じたスケールを計算（メモ化）
+  // プレビューエリアの実際のサイズに基づいて、スクロールが不要なサイズに収まるようにする
   const previewScale = useMemo(() => {
     if (!layout) return 1;
 
@@ -102,15 +105,17 @@ export function PlaylistPreviewModal({ opened, onClose, playlistId, onPlay }: Pl
       layoutHeight = BASE_CANVAS_HEIGHT;
     }
 
-    // プレビューエリアの最大サイズ
-    const maxPreviewWidth = 800;
-    const maxPreviewHeight = 600;
+    // プレビューエリアの実際のサイズを使用（パディング分を考慮）
+    // useElementSizeで取得したサイズが0の場合はフォールバック値を使用
+    const padding = 48; // p="xl" = 24px * 2
+    const maxPreviewWidth = previewAreaWidth > 0 ? previewAreaWidth - padding : 800;
+    const maxPreviewHeight = previewAreaHeight > 0 ? previewAreaHeight - padding : 600;
 
-    // スケールを計算（縦横比を保持）
+    // スケールを計算（縦横比を保持、スクロールが発生しないように）
     const scaleX = maxPreviewWidth / layoutWidth;
     const scaleY = maxPreviewHeight / layoutHeight;
-    return Math.min(scaleX, scaleY);
-  }, [layout]);
+    return Math.min(scaleX, scaleY, 1); // 最大スケール1を超えないようにする
+  }, [layout, previewAreaWidth, previewAreaHeight]);
 
   // モーダルクローズ時のクリーンアップ
   const handleClose = useCallback(() => {
@@ -153,15 +158,15 @@ export function PlaylistPreviewModal({ opened, onClose, playlistId, onPlay }: Pl
       }
       size="calc(100vw - 40px)"
       styles={{
-        content: { height: "calc(100vh - 80px)" },
-        body: { height: "100%", padding: 0 },
+        content: { height: "calc(100vh - 80px)", overflow: "hidden" },
+        body: { height: "calc(100% - 62px)", padding: 0 }, // ヘッダー分（62px）を引く
       }}
     >
       <LoadingOverlay visible={loading} />
 
       <Flex h="100%">
         {/* プレビューエリア */}
-        <Box flex={1} p="xl" style={{ overflow: "auto" }}>
+        <Box ref={previewAreaRef} flex={1} p="xl" style={{ overflow: "hidden" }}>
           {error ? (
             <Stack align="center" justify="center" h="100%">
               <Text c="red">{error}</Text>
