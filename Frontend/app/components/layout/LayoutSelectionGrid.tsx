@@ -2,6 +2,7 @@ import { Box, Paper, SimpleGrid, Text } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 import { useLayout } from "~/hooks/useLayout";
 import type { LayoutIndex, LayoutItem } from "~/types/layout";
+import { generateUUID } from "~/utils/uuid";
 
 interface LayoutSelectionGridProps {
   layouts: LayoutIndex[];
@@ -253,7 +254,7 @@ export const LayoutSelectionGrid = ({
   if (loading) {
     return (
       <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="md">
-        {Array.from({ length: 6 }, () => crypto.randomUUID()).map((id) => (
+        {Array.from({ length: 6 }, () => generateUUID()).map((id) => (
           <Box key={id} h="180px" bg="gray.0" style={{ borderRadius: "var(--mantine-radius-md)" }} />
         ))}
       </SimpleGrid>

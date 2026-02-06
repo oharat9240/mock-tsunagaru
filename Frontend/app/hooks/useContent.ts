@@ -4,6 +4,7 @@ import type { ContentIndex, ContentItem, HlsContent } from "~/types/content";
 import { ContentItemSchema, ContentsIndexSchema, getContentTypeFromMimeType } from "~/types/content";
 import { type ContentUsageInfo, checkContentUsage } from "~/utils/contentUsage";
 import { logger } from "~/utils/logger";
+import { generateUUID } from "~/utils/uuid";
 import { usePlaylist } from "./usePlaylist";
 
 // パスからファイル名を抽出
@@ -158,7 +159,7 @@ export const useContent = () => {
    */
   const createHlsContent = useCallback(
     async (name: string, hlsInfo: HlsContent): Promise<ContentItem> => {
-      const id = crypto.randomUUID();
+      const id = generateUUID();
       const now = new Date().toISOString();
 
       const newContent: ContentItem = {

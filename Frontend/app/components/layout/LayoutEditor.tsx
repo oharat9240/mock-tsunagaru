@@ -15,6 +15,7 @@ import { IconEdit, IconPlus, IconTrash, IconX } from "@tabler/icons-react";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Moveable from "react-moveable";
 import type { Orientation, Region } from "~/types/layout";
+import { generateUUID } from "~/utils/uuid";
 
 interface LayoutEditorProps {
   regions: Region[];
@@ -217,7 +218,7 @@ export const LayoutEditor = ({
     if (regions.length >= 4) return;
 
     const newRegion: Region = {
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       x: 100,
       y: 100,
       width: virtualCanvasDimensions.width / 2,

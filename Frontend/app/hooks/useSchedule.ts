@@ -3,6 +3,7 @@ import { apiClient } from "~/services/apiClient";
 import type { ScheduleIndex, ScheduleItem } from "~/types/schedule";
 import { ScheduleItemSchema, SchedulesIndexSchema } from "~/types/schedule";
 import { logger } from "~/utils/logger";
+import { generateUUID } from "~/utils/uuid";
 
 export const useSchedule = () => {
   /**
@@ -66,7 +67,7 @@ export const useSchedule = () => {
    */
   const createSchedule = useCallback(
     async (scheduleData: Omit<ScheduleItem, "id" | "createdAt" | "updatedAt">): Promise<ScheduleItem> => {
-      const id = crypto.randomUUID();
+      const id = generateUUID();
       const now = new Date().toISOString();
 
       const newSchedule: ScheduleItem = {

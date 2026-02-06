@@ -5,6 +5,7 @@ import type { LayoutIndex, LayoutItem } from "~/types/layout";
 import { LayoutItemSchema, LayoutsIndexSchema } from "~/types/layout";
 import { checkLayoutUsage, type LayoutUsageInfo } from "~/utils/layoutUsage";
 import { logger } from "~/utils/logger";
+import { generateUUID } from "~/utils/uuid";
 
 export const useLayout = () => {
   const { getPlaylistsIndex, getPlaylistById } = usePlaylist();
@@ -62,7 +63,7 @@ export const useLayout = () => {
    */
   const createLayout = useCallback(
     async (layoutData: Omit<LayoutItem, "id" | "createdAt" | "updatedAt">): Promise<LayoutItem> => {
-      const id = crypto.randomUUID();
+      const id = generateUUID();
       const now = new Date().toISOString();
 
       const newLayout: LayoutItem = {

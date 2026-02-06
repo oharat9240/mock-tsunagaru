@@ -3,6 +3,7 @@ import { apiClient } from "~/services/apiClient";
 import type { PlaylistIndex, PlaylistItem } from "~/types/playlist";
 import { PlaylistItemSchema, PlaylistsIndexSchema } from "~/types/playlist";
 import { logger } from "~/utils/logger";
+import { generateUUID } from "~/utils/uuid";
 
 export const usePlaylist = () => {
   /**
@@ -48,7 +49,7 @@ export const usePlaylist = () => {
    */
   const createPlaylist = useCallback(
     async (playlistData: Omit<PlaylistItem, "id" | "createdAt" | "updatedAt">): Promise<PlaylistItem> => {
-      const id = crypto.randomUUID();
+      const id = generateUUID();
       const now = new Date().toISOString();
 
       const newPlaylist: PlaylistItem = {
